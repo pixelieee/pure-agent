@@ -54,7 +54,7 @@ node src/cli.ts --demo --prompt "整理这条演示笔记"
 
 ## 当前验证
 
-严格 TypeScript 类型检查、108 项离线测试，以及独立安装包验收测试通过。终端已验证交互输入、窄屏降级、重定向输出、取消后继续运行与退出。已验证三轮限定项目资料的真实调用与 Token 用量；这不是通用任务准确率或生产验收。
+主分支基线已通过严格 TypeScript 类型检查、108 项离线测试，以及独立安装包验收测试。本流式分支已另通过类型检查和 129 项离线测试（含流式回归）；这不改变上述主分支基线记录。终端已验证交互输入、窄屏降级、重定向输出、取消后继续运行与退出。已验证三轮限定项目资料的真实调用与 Token 用量；这不是通用任务准确率或生产验收。
 
 安装开发依赖后执行 `npm run check`。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
 
@@ -91,7 +91,7 @@ npm run test:package
 node --use-env-proxy --env-file=.env.local src/cli.ts --openai --reasoning low
 ```
 
-密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses API，不自行解析 SSE；尚未实现流式显示。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
+密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses SDK 流式接口，不自行解析 SSE；交互式 TUI 增量更新同一个 Markdown 块，管道输出仍仅显示完整回复。中断的局部文本会标记为未保存，不写入会话历史。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
 
 当前 CLI 的真实模式只提供 `read_project_file`，允许 README、package.json、依赖决策和测试前基线四个指定文件；不提供任意文件读取、shell、写入或网络工具。SDK 可注入其他工具，但宿主必须负责授权和隔离。`/create` 只修改当前 Agent 指令，不动态生成工具。
 
