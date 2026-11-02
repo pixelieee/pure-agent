@@ -21,7 +21,15 @@ npm run test:package
 
 第一步使用 `package-lock.json` 安装依赖并填充 npm 缓存，需要依赖源访问权限。`check` 执行严格类型检查、离线测试和构建；`test:package` 在临时目录离线安装 tarball，验证 SDK 导入、类型声明和演示 CLI。缓存缺失时先重新执行依赖安装，不要把安装包测试改成实时模型调用。
 
-CI 的“离线”指模型测试不访问真实模型服务，并非整个工作流断网：检出、Node 安装和依赖下载仍需要网络。当前仅在 Ubuntu 上运行；安装包测试直接执行 POSIX `.bin` 路径，尚不能据此声称 Windows 已通过验收。
+CI 的“离线”指模型测试不访问真实模型服务，并非整个工作流断网：检出、Node 安装和依赖下载仍需要网络。工作流配置为 Ubuntu 和 Windows 两个平台分别运行上述验收；是否通过必须检查对应提交的远程运行结果，不能仅凭配置声称已通过。
+
+## CI 汇总门禁与独立验收
+
+`Offline acceptance gate` 是固定名称的汇总检查，等待整个 `acceptance` 矩阵结束，不重复运行测试。作业和判定步骤使用 `always()`，只接受 `needs.acceptance.result` 为 `success`；`failure`、`cancelled`、`skipped` 及缺失/未知结果均退出失败，不能把跳过验收当成绿灯。工作流被强制取消或运行器不可用时，门禁也可能无法完成；这不是通过证据。
+
+这是可供仓库保护规则选用的检查名称，并不表示已配置必需检查或独立审批。汇总绿灯只证明现有验收命令成功，不能证明测试没有漏项、断言没有被削弱，也不能取代 UT/IT/E2E 交叉验收和负责人的合并决定。
+
+实现依据：[GitHub needs/result 与表达式作用域](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#needs-context)、[依赖作业与 always()](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds)。
 
 ## 安全与提交范围
 
