@@ -56,13 +56,13 @@ node src/cli.ts --demo --prompt "整理这条演示笔记"
 
 ## 当前验证
 
-2026-11-02 状态快照：主干已合并初始化、显式配置、流式输出与 Windows 安装包验收。独立验收及 [双平台 CI](https://github.com/pixelieee/pure-agent/actions/runs/41493013469) 记录：Ubuntu、Windows 均通过 139 项离线测试及 1 项安装包测试；冷缓存安装包问题已修复。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
+2026-11-02 状态快照：主干已合并 PR #1–#8，包括显式配置、流式输出、Windows 安装包验收、可选 SDK 工作区读取工具、CI 汇总门禁与严格静态检查。已接受主干提交为 [`3f65d5e`](https://github.com/pixelieee/pure-agent/commit/3f65d5efa3fd5169ecaae3d3e02b6b98ba7e59fe)；独立验收及 [双平台 CI run 41495942252](https://github.com/pixelieee/pure-agent/actions/runs/41495942252) 记录：Ubuntu、Windows 均通过 165 项离线测试及 2 项安装包测试，`Offline acceptance gate` 通过。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
 
 终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。真实模型记录只覆盖三轮限定项目资料交互与 Token 用量，不代表流式功能的真实模型验收、通用任务准确率或生产验收。
 
-安装开发依赖后执行 `npm run check`。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
+安装开发依赖后执行 `npm run check`，其中类型检查已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 和 `noImplicitReturns`；这不等于已采用完整 lint / format 门禁。GitHub 分支保护仍待确认，不能把汇总 CI 检查等同于已强制执行的保护规则。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
 
-架构图见 `docs/architecture.png`，可编辑源文件为 `docs/architecture.dot`，矢量版本为 `docs/architecture.svg`。
+架构图见 `docs/architecture.png`，可编辑源文件为 `docs/architecture.dot`，矢量版本为 `docs/architecture.svg`。使用 Graphviz 重建：`dot -Tsvg docs/architecture.dot -o docs/architecture.svg`、`dot -Tpng docs/architecture.dot -o docs/architecture.png`。
 
 ## 定位
 
@@ -103,7 +103,7 @@ node --use-env-proxy --env-file=.env.local src/cli.ts --openai --reasoning low
 
 密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses SDK 流式接口，不自行解析 SSE；交互式 TUI 增量更新同一个 Markdown 块，管道输出仍仅显示完整回复。中断的局部文本会标记为未保存，不写入会话历史。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
 
-当前 CLI 的真实模式只提供 `read_project_file`，允许 README、package.json、依赖决策和测试前基线四个指定文件；不提供任意文件读取、shell、写入或网络工具。SDK 可注入其他工具，但宿主必须负责授权和隔离。`/create` 只修改当前 Agent 指令，不动态生成工具。
+当前 CLI 的真实模式只提供 `read_project_file`，允许 README、package.json、依赖决策和测试前基线四个指定文件；不提供任意文件读取、shell、写入或网络工具。SDK 已提供可显式注入的 `createWorkspaceFileTool`：由宿主指定根目录、精确文件白名单与读取上限，详见 [工作区只读工具](docs/workspace-file-tool.md)。它默认不注册，不自动扩大 CLI 能力，也不是安全沙箱。SDK 可注入其他工具，但宿主必须负责授权和隔离。`/create` 只修改当前 Agent 指令，不动态生成工具。
 
 模型续接数据作为 `providerData` 由适配器持有在消息中，核心仅复制保留；真实测试导出记录不包含它。`onUsage` 只回传数值用量，SDK 错误不回显请求头或密钥。
 

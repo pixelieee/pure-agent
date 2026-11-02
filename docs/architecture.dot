@@ -5,6 +5,7 @@ digraph PureAgent {
  subgraph cluster_entry {label="入口与装配"; fontsize=18; color="#485566"; style=rounded;
  sdk [label="SDK 入口\nsrc/index.ts\n调用方注入模型与工具"];
  cli [label="CLI 装配入口\nsrc/cli.ts\n解析参数、装配模型 / 工具 / 终端"];
+ config [label="显式会话配置 / src/config.ts\n有界 JSON + Schema 校验\n默认值 < 配置文件 < CLI 参数\n不配置密钥、端点或工具权限"];
  {rank=same; sdk;cli;}
  }
  subgraph cluster_ui {label="终端交互层（SDK 不依赖此层）";fontsize=18;color="#485566";style=rounded;
@@ -21,10 +22,12 @@ digraph PureAgent {
  }
  subgraph cluster_impl {label="当前可注入实现（由入口显式选择）";fontsize=18;color="#485566";style=rounded;
  demo [label="模型实现\nOpenAI Responses / src/providers/openai.ts\nDemo / src/demo.ts（显式离线）"];
- note [label="工具实现\nread_project_file（四文件只读）\nformat_note（演示）"];
+ note [label="工具实现\nread_project_file（CLI 四文件只读）\ncreateWorkspaceFileTool（SDK 显式注入）\n根目录 / 精确白名单 / 读取上限；非沙箱\nformat_note（演示）"];
  {rank=same;demo;note;}
  }
  sdk -> core [label="程序调用"];
+ cli -> config [label="启动时解析"];
+ config -> ctrl [label="有界配置快照"];
  cli -> ctrl [label="装配"];
  cli -> view [label="装配"];
  ctrl -> core [label="run / signal / onEvent"];
