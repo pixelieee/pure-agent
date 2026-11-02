@@ -18,7 +18,7 @@ jobs:
     timeout-minutes: 15
     env:
       # A cold cache catches accidental reliance on prior registry metadata.
-      npm_config_cache: ${{ runner.temp }}/pure-agent-npm-cache
+      npm_config_cache: /tmp/pure-agent-npm-cache-${{ github.run_id }}-${{ github.run_attempt }}
       npm_config_registry: https://registry.npmjs.org
     steps:
       - name: Check out source
