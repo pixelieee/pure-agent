@@ -75,7 +75,15 @@ npm run build
 npm pack --ignore-scripts
 ```
 
-`test:package` 在临时目录安装本地 tarball，验证真实包入口、TypeScript 消费者和 CLI 可执行链接；没有发布到 npm，也没有调用模型 API。此测试离线安装，依赖需要已在 npm 缓存中；如果缓存不足，应先运行上面的 `npm ci --ignore-scripts`。
+`test:package` 在临时目录安装本地 tarball，验证真实包入口、TypeScript 消费者和 CLI 可执行链接；没有发布到 npm，也没有调用模型 API。测试根据仓库 lockfile 的运行时依赖图和打包产物的 integrity 构造消费者 lockfile，使用 `npm ci --offline --ignore-scripts` 安装并核对依赖版本，不需要 registry 元数据（packument）。依赖 tarball 需要先通过上面的 `npm ci --ignore-scripts` 缓存；这一步可联网，之后的测试不调用模型。CI 每次使用全新缓存，避免本地热缓存掩盖缺失依赖。也可以在 POSIX shell 中从空缓存复现：
+
+```bash
+export npm_config_cache="$(mktemp -d)"
+export npm_config_registry=https://registry.npmjs.org
+npm ci --ignore-scripts
+npm run check
+npm run test:package
+```
 
 安装本地 tarball 后，SDK 入口为 `pure-agent`，CLI 命令为 `pure-agent --demo`。npm 包仅包含编译后的 JS/类型声明、README、Markdown 文档和 SVG；完整源码 ZIP 另含测试、DOT 和 PNG。
 
