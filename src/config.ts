@@ -12,11 +12,16 @@ export interface AgentConfig {
   readonly maxOutputTokens: number;
 }
 export const DEFAULT_CONFIG: Readonly<AgentConfig> = Object.freeze({
-  system: PROJECT_SYSTEM, model: 'gpt-5.6-luna', reasoning: 'low', maxSteps: 4, maxOutputTokens: 1024,
+  system: PROJECT_SYSTEM,
+  model: 'gpt-5.6-luna',
+  reasoning: 'low',
+  maxSteps: 4,
+  maxOutputTokens: 1024,
 });
 const fields = ['system', 'model', 'reasoning', 'maxSteps', 'maxOutputTokens'];
 const validate = new Ajv({ strict: true, coerceTypes: false, useDefaults: false, removeAdditional: false }).compile({
-  type: 'object', additionalProperties: false,
+  type: 'object',
+  additionalProperties: false,
   properties: {
     system: { type: 'string', minLength: 1, maxLength: 16000, pattern: '\\S' },
     model: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
@@ -30,7 +35,9 @@ export class ConfigError extends Error {
   readonly location: string;
   constructor(code: string, location = '/') {
     super(`Configuration error: ${code} at ${location}.`);
-    this.name = 'ConfigError'; this.code = code; this.location = location;
+    this.name = 'ConfigError';
+    this.code = code;
+    this.location = location;
   }
 }
 /** Never render Ajv errors, unknown property names, file paths or JSON parser messages. */
@@ -46,7 +53,7 @@ function checked(value: unknown): Readonly<Partial<AgentConfig>> {
   }
   if (!validate(value)) {
     const error = validate.errors?.[0];
-    const location = fields.some(field => error?.instancePath === `/${field}`) ? error!.instancePath : '/';
+    const location = fields.some((field) => error?.instancePath === `/${field}`) ? error!.instancePath : '/';
     throw new ConfigError('CONFIG_SCHEMA', location);
   }
   return Object.freeze({ ...(value as Partial<AgentConfig>) });
@@ -68,14 +75,26 @@ export async function loadConfig(path: string): Promise<Readonly<Partial<AgentCo
       }
       if (length > 65536) throw new ConfigError('CONFIG_FILE');
       text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, length));
-    } finally { await handle.close(); }
-  } catch { throw new ConfigError('CONFIG_FILE'); }
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    throw new ConfigError('CONFIG_FILE');
+  }
   let parsed: unknown;
-  try { parsed = JSON.parse(text); } catch { throw new ConfigError('CONFIG_JSON'); }
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ConfigError('CONFIG_JSON');
+  }
   return checked(parsed);
 }
 /** Resolve once before creating the controller; /new reuses this immutable snapshot. */
-export function resolveConfig(config: Readonly<Partial<AgentConfig>> = {}, overrides: Readonly<Partial<AgentConfig>> = {}): Readonly<AgentConfig> {
-  checked(config); checked(overrides);
+export function resolveConfig(
+  config: Readonly<Partial<AgentConfig>> = {},
+  overrides: Readonly<Partial<AgentConfig>> = {},
+): Readonly<AgentConfig> {
+  checked(config);
+  checked(overrides);
   return Object.freeze({ ...DEFAULT_CONFIG, ...config, ...overrides });
 }

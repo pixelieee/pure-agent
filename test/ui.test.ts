@@ -10,7 +10,18 @@ import { TerminalView, safeText, wrapText } from '../src/ui/view.ts';
 
 function capture(columns = 80, color = false) {
   let text = '';
-  return { view: new TerminalView({ write: (part) => { text += part; }, columns }, color), text: () => text };
+  return {
+    view: new TerminalView(
+      {
+        write: (part) => {
+          text += part;
+        },
+        columns,
+      },
+      color,
+    ),
+    text: () => text,
+  };
 }
 test('terminal content cannot execute ANSI, OSC, C0 or bidi controls', () => {
   assert.equal(safeText('\x1b[2Jhello\x1b]0;danger\x07\r\b\u202e!'), 'hello!');
@@ -40,7 +51,10 @@ test('demo calls and resolves a real tool through core', async () => {
 test('create uses exact instructions and new restores a fresh session', async () => {
   const configurations: string[] = [];
   const out = capture();
-  const controller = new SessionController((system) => { configurations.push(system); return createDemoAgent(system); }, out.view);
+  const controller = new SessionController((system) => {
+    configurations.push(system);
+    return createDemoAgent(system);
+  }, out.view);
   await controller.submit('/create 用中文回答');
   assert.equal(configurations.at(-1), '用中文回答');
   await controller.submit('/new');
@@ -66,10 +80,16 @@ test('controller reports a rejected run, returns undefined, and permits a subseq
   let rejectNext = true;
   const controller = new SessionController((system) => {
     const agent = createDemoAgent(system);
-    return { ...agent, run: async (...args: Parameters<typeof agent.run>) => {
-      if (rejectNext) { rejectNext = false; throw new Error('run rejected'); }
-      return agent.run(...args);
-    } };
+    return {
+      ...agent,
+      run: async (...args: Parameters<typeof agent.run>) => {
+        if (rejectNext) {
+          rejectNext = false;
+          throw new Error('run rejected');
+        }
+        return agent.run(...args);
+      },
+    };
   }, out.view);
   assert.equal(await controller.submit('first'), undefined);
   assert.match(out.text(), /\[ERROR\] run rejected/);
@@ -81,12 +101,23 @@ test('controller reports a rejected run, returns undefined, and permits a subseq
 test('Ctrl+C cancels active run, leaves session open, then exits when idle', async () => {
   const out = capture();
   let started!: () => void;
-  const ready = new Promise<void>((resolve) => { started = resolve; });
-  const controller = new SessionController((system) => createAgent({ system, model: { complete: async (_messages, _tools, signal) => {
-    started();
-    await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-    return { role: 'assistant', content: 'cancelled' };
-  } } }), out.view);
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const controller = new SessionController(
+    (system) =>
+      createAgent({
+        system,
+        model: {
+          complete: async (_messages, _tools, signal) => {
+            started();
+            await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+            return { role: 'assistant', content: 'cancelled' };
+          },
+        },
+      }),
+    out.view,
+  );
   const run = controller.submit('slow');
   await ready;
   controller.interrupt();
@@ -104,7 +135,8 @@ test('piped commands drain in order through EOF without hanging', async () => {
   assert.doesNotMatch(out.text(), /ignored/);
 });
 test('CLI requires explicit demo and supports one-shot prompt', () => {
-  const run = (...args: string[]) => spawnSync(process.execPath, ['src/cli.ts', ...args], { encoding: 'utf8', timeout: 3000 });
+  const run = (...args: string[]) =>
+    spawnSync(process.execPath, ['src/cli.ts', ...args], { encoding: 'utf8', timeout: 3000 });
   assert.equal(run().status, 2);
   assert.equal(run('--help').status, 0);
   assert.equal(run('--demo', '--prompt').status, 2);
@@ -115,11 +147,21 @@ test('CLI requires explicit demo and supports one-shot prompt', () => {
 });
 
 test('controller takes presentation and default instructions from composition root', async () => {
-  const out = capture(); const systems: string[] = [];
-  const controller = new SessionController((system) => {
-    systems.push(system);
-    return createAgent({ system, model: { complete: async () => ({ role: 'assistant', content: 'ready' }) } });
-  }, out.view, { defaultSystem: 'injected policy', modeLabel: 'TEST', helpNote: 'Injected help', configurationNote: 'Injected config note' });
+  const out = capture();
+  const systems: string[] = [];
+  const controller = new SessionController(
+    (system) => {
+      systems.push(system);
+      return createAgent({ system, model: { complete: async () => ({ role: 'assistant', content: 'ready' }) } });
+    },
+    out.view,
+    {
+      defaultSystem: 'injected policy',
+      modeLabel: 'TEST',
+      helpNote: 'Injected help',
+      configurationNote: 'Injected config note',
+    },
+  );
   await controller.submit('/create temporary');
   await controller.submit('/new');
   await controller.submit('/help');
@@ -132,11 +174,23 @@ test('controller takes presentation and default instructions from composition ro
 });
 
 test('busy controller rejects reset, configuration, and input without replacing active session', async () => {
-  const out = capture(); let factories = 0; let release!: () => void;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const out = capture();
+  let factories = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const controller = new SessionController((system) => {
     factories++;
-    return createAgent({ system, model: { complete: async () => { await gate; return { role: 'assistant', content: 'finished' }; } } });
+    return createAgent({
+      system,
+      model: {
+        complete: async () => {
+          await gate;
+          return { role: 'assistant', content: 'finished' };
+        },
+      },
+    });
   }, out.view);
   const running = controller.submit('first');
   assert.equal(controller.busy, true);
@@ -151,7 +205,6 @@ test('busy controller rejects reset, configuration, and input without replacing 
   assert.equal(factories, 2);
 });
 
-
 test('wrapping preserves complete graphemes and terminal cell widths', () => {
   const graphemes = ['e\u0301', '你', '🇨🇳', '👍🏽', '👨‍👩‍👧‍👦', '1️⃣'];
   for (const grapheme of graphemes) {
@@ -160,8 +213,12 @@ test('wrapping preserves complete graphemes and terminal cell widths', () => {
     const lines = wrapText(`a${grapheme}b${grapheme}`, width + 1);
     assert.equal(lines.join(''), `a${grapheme}b${grapheme}`);
     assert.ok(lines.every((line) => stringWidth(line) <= width + 1));
-    const originalClusters = [...new Intl.Segmenter().segment(`a${grapheme}b${grapheme}`)].map(({ segment }) => segment);
-    const wrappedClusters = lines.flatMap((line) => [...new Intl.Segmenter().segment(line)].map(({ segment }) => segment));
+    const originalClusters = [...new Intl.Segmenter().segment(`a${grapheme}b${grapheme}`)].map(
+      ({ segment }) => segment,
+    );
+    const wrappedClusters = lines.flatMap((line) =>
+      [...new Intl.Segmenter().segment(line)].map(({ segment }) => segment),
+    );
     assert.deepEqual(wrappedClusters, originalClusters);
   }
 });
@@ -179,7 +236,6 @@ test('wrapping preserves spaces and blank lines, strips malicious ANSI first', (
   assert.deepEqual(wrapText('', 8), ['']);
   assert.deepEqual(wrapText('a\n', 8), ['a', '']);
 });
-
 
 test('wrapping preserves exact NFD code points for copying code and tool output', () => {
   const input = 'const cafe\u0301 = "A\u030a e\u0301 o\u0308";';

@@ -3,8 +3,14 @@ import type { Model, Tool } from '../src/index.ts';
 
 // Fully offline example. Replace only `model` to connect a real provider.
 const sum: Tool = {
-  name: 'sum', description: 'Add two finite numbers.',
-  parameters: { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'], additionalProperties: false },
+  name: 'sum',
+  description: 'Add two finite numbers.',
+  parameters: {
+    type: 'object',
+    properties: { a: { type: 'number' }, b: { type: 'number' } },
+    required: ['a', 'b'],
+    additionalProperties: false,
+  },
   validate: (value: unknown) => {
     const args = value as { a?: number; b?: number };
     return Number.isFinite(args.a) && Number.isFinite(args.b);
@@ -15,7 +21,11 @@ const model: Model = {
   async complete(messages) {
     const last = messages.at(-1)!;
     if (last.role === 'tool') return { role: 'assistant', content: `The result is ${JSON.parse(last.content!).sum}.` };
-    return { role: 'assistant', content: null, tool_calls: [{ id: 'sum-1', type: 'function', function: { name: 'sum', arguments: '{"a":2,"b":3}' } }] };
+    return {
+      role: 'assistant',
+      content: null,
+      tool_calls: [{ id: 'sum-1', type: 'function', function: { name: 'sum', arguments: '{"a":2,"b":3}' } }],
+    };
   },
 };
 const agent = createAgent({ model, tools: [sum], system: 'Use only the supplied tools.' });

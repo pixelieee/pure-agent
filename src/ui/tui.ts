@@ -1,6 +1,16 @@
 import {
-  Container, Editor, Markdown, ProcessTerminal, ScrollView, Text, TuiAltScreen,
-  VStack, matchesKey, truncateToWidth, type Component, type Terminal,
+  Container,
+  Editor,
+  Markdown,
+  ProcessTerminal,
+  ScrollView,
+  Text,
+  TuiAltScreen,
+  VStack,
+  matchesKey,
+  truncateToWidth,
+  type Component,
+  type Terminal,
 } from '@earendil-works/pi-tui';
 import type { AgentEvent, RunResult } from '../core.ts';
 import { safeText, type PanelKind, type SessionView } from './view.ts';
@@ -10,9 +20,13 @@ import { deco, markdownTheme } from './theme.ts';
 
 class Line implements Component {
   private value: () => string;
-  constructor(value: () => string) { this.value = value; }
+  constructor(value: () => string) {
+    this.value = value;
+  }
   invalidate() {}
-  render(width: number) { return [truncateToWidth(this.value(), width, '')]; }
+  render(width: number) {
+    return [truncateToWidth(this.value(), width, '')];
+  }
 }
 
 class ToolSummary implements Component {
@@ -22,7 +36,10 @@ class ToolSummary implements Component {
   readonly args: string;
   private expanded: () => boolean;
   constructor(id: string, name: string, args: string, expanded: () => boolean) {
-    this.id = id; this.name = name; this.args = args; this.expanded = expanded;
+    this.id = id;
+    this.name = name;
+    this.args = args;
+    this.expanded = expanded;
   }
   invalidate() {}
   render(width: number) {
@@ -31,7 +48,9 @@ class ToolSummary implements Component {
       const args = JSON.parse(this.args) as Record<string, unknown>;
       const value = args.path ?? args.file ?? args.query;
       if (typeof value === 'string') target = `  ${safeText(value)}`;
-    } catch { /* Tool payload remains available in details. */ }
+    } catch {
+      /* Tool payload remains available in details. */
+    }
     let error: string | undefined;
     if (this.result !== undefined) {
       try {
@@ -39,12 +58,20 @@ class ToolSummary implements Component {
         if (result && typeof result === 'object' && 'ok' in result && result.ok === false && 'error' in result) {
           error = safeText(result.error).replace(/\n/g, ' ');
         }
-      } catch { /* Non-JSON results remain neutral completed entries. */ }
+      } catch {
+        /* Non-JSON results remain neutral completed entries. */
+      }
     }
     const label = `${error !== undefined ? '!' : this.result === undefined ? '◌' : '·'} ${this.name}${target}${error !== undefined ? ` · ${error}` : ''}`;
     const lines = [truncateToWidth((error !== undefined ? deco.red : deco.muted)(`  ${label}`), width, '…')];
     if (this.expanded()) {
-      const detail = new Text(deco.muted(`Arguments:\n${formatToolDetails(this.args)}\nResult:\n${this.result === undefined ? 'running…' : formatToolDetails(this.result)}`), 4, 0);
+      const detail = new Text(
+        deco.muted(
+          `Arguments:\n${formatToolDetails(this.args)}\nResult:\n${this.result === undefined ? 'running…' : formatToolDetails(this.result)}`,
+        ),
+        4,
+        0,
+      );
       lines.push(...detail.render(width));
     }
     return lines;
@@ -78,38 +105,91 @@ export class PureAgentTUI implements SessionView {
   constructor(options: { terminal?: Terminal; modeLabel: string; note?: string }) {
     this.mode = safeText(options.modeLabel);
     this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, { mouse: false });
-    this.editor = new Editor(this.tui, {
-      borderColor: deco.amber,
-      selectList: { selectedPrefix: deco.amber, selectedText: deco.selected, description: deco.muted, scrollInfo: deco.muted, noMatch: deco.muted },
-    }, { paddingX: 1, autocompleteMaxVisible: 4 });
+    this.editor = new Editor(
+      this.tui,
+      {
+        borderColor: deco.amber,
+        selectList: {
+          selectedPrefix: deco.amber,
+          selectedText: deco.selected,
+          description: deco.muted,
+          scrollInfo: deco.muted,
+          noMatch: deco.muted,
+        },
+      },
+      { paddingX: 1, autocompleteMaxVisible: 4 },
+    );
     this.editor.setAutocompleteProvider(commandCompletion);
-    this.editor.onSubmit = (text) => { void this.submit(text); };
+    this.editor.onSubmit = (text) => {
+      void this.submit(text);
+    };
     const scroll = new ScrollView(this.transcript, { follow: 'end', primary: true, scrollbar: 'auto' });
-    this.tui.setLayoutRoot(new VStack([
-      { component: new Line(() => deco.ink(` ${deco.amber(deco.bold('PURE / AGENT'))}  ${deco.muted(this.mode.startsWith('REPLAY') ? 'REPLAY · recorded output · offline' : 'Developer edition · 001')}`)), shrink: 0 },
-      { component: scroll, grow: 1, basis: 0, minSize: 1 },
-      { component: new Line(() => deco.muted(` ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`)), shrink: 0 },
-      { component: this.editor, shrink: 0 },
-      { component: new Line(() => deco.muted(` ${this.mode}  ·  Enter send · Shift+Enter / Ctrl+J newline`)), shrink: 0 },
-      { component: new Line(() => deco.muted(` / commands · Ctrl+O tools ${this.expanded ? 'open' : 'closed'} · PgUp/Dn scroll · Esc cancel · Ctrl+C ${this.controller?.busy ? 'cancel' : 'exit'}`)), shrink: 0 },
-    ]));
+    this.tui.setLayoutRoot(
+      new VStack([
+        {
+          component: new Line(() =>
+            deco.ink(
+              ` ${deco.amber(deco.bold('PURE / AGENT'))}  ${deco.muted(this.mode.startsWith('REPLAY') ? 'REPLAY · recorded output · offline' : 'Developer edition · 001')}`,
+            ),
+          ),
+          shrink: 0,
+        },
+        { component: scroll, grow: 1, basis: 0, minSize: 1 },
+        {
+          component: new Line(() =>
+            deco.muted(` ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`),
+          ),
+          shrink: 0,
+        },
+        { component: this.editor, shrink: 0 },
+        {
+          component: new Line(() => deco.muted(` ${this.mode}  ·  Enter send · Shift+Enter / Ctrl+J newline`)),
+          shrink: 0,
+        },
+        {
+          component: new Line(() =>
+            deco.muted(
+              ` / commands · Ctrl+O tools ${this.expanded ? 'open' : 'closed'} · PgUp/Dn scroll · Esc cancel · Ctrl+C ${this.controller?.busy ? 'cancel' : 'exit'}`,
+            ),
+          ),
+          shrink: 0,
+        },
+      ]),
+    );
     this.tui.setFocus(this.editor);
     this.tui.addInputListener((data) => {
-      if (matchesKey(data, 'ctrl+o')) { this.expanded = !this.expanded; this.tui.requestRender(); return { consume: true }; }
-      if (matchesKey(data, 'ctrl+c')) { this.interrupt(); return { consume: true }; }
-      if (matchesKey(data, 'escape') && this.controller?.busy) { this.interrupt(); return { consume: true }; }
+      if (matchesKey(data, 'ctrl+o')) {
+        this.expanded = !this.expanded;
+        this.tui.requestRender();
+        return { consume: true };
+      }
+      if (matchesKey(data, 'ctrl+c')) {
+        this.interrupt();
+        return { consume: true };
+      }
+      if (matchesKey(data, 'escape') && this.controller?.busy) {
+        this.interrupt();
+        return { consume: true };
+      }
       return undefined;
     });
     this.panel('STATUS', options.note ?? 'One session. Explicit tools. /help to begin.');
   }
-  attach(controller: SessionActions) { this.controller = controller; }
+  attach(controller: SessionActions) {
+    this.controller = controller;
+  }
   start() {
     if (this.started) return;
     this.started = true;
     process.on('SIGINT', this.signalHandler);
     this.tui.start();
     this.tui.terminal.setTitle(this.mode.startsWith('REPLAY') ? 'Pure Agent · Replay' : 'Pure Agent');
-    this.pulse = setInterval(() => { if (this.controller?.busy) { this.frame++; this.tui.requestRender(); } }, 180);
+    this.pulse = setInterval(() => {
+      if (this.controller?.busy) {
+        this.frame++;
+        this.tui.requestRender();
+      }
+    }, 180);
   }
   stop() {
     if (!this.started) return;
@@ -122,9 +202,15 @@ export class PureAgentTUI implements SessionView {
   }
   async run() {
     if (!this.controller) throw new Error('Attach a session controller before running the TUI');
-    const closed = new Promise<void>((resolve) => { this.resolveClosed = resolve; });
+    const closed = new Promise<void>((resolve) => {
+      this.resolveClosed = resolve;
+    });
     this.start();
-    try { await closed; } finally { this.stop(); }
+    try {
+      await closed;
+    } finally {
+      this.stop();
+    }
   }
   private interrupt() {
     this.controller?.interrupt();
@@ -136,9 +222,11 @@ export class PureAgentTUI implements SessionView {
     this.editor.addToHistory(text);
     // Pi clears the submitted value itself. New typing during a run stays in the editor.
     this.editor.disableSubmit = true;
-    try { await this.controller.submit(text); }
-    catch (error) { this.panel('ERROR', error instanceof Error ? error.message : String(error)); }
-    finally {
+    try {
+      await this.controller.submit(text);
+    } catch (error) {
+      this.panel('ERROR', error instanceof Error ? error.message : String(error));
+    } finally {
       this.editor.disableSubmit = false;
       if (this.controller.closed) this.stop();
       else this.tui.requestRender();
@@ -187,7 +275,12 @@ export class PureAgentTUI implements SessionView {
       } else if (event.text) this.panel('AGENT', event.text);
     }
     if (event.type === 'tool_start') {
-      const tool = new ToolSummary(event.id, safeText(event.name), safeText(JSON.stringify(event.args)), () => this.expanded);
+      const tool = new ToolSummary(
+        event.id,
+        safeText(event.name),
+        safeText(JSON.stringify(event.args)),
+        () => this.expanded,
+      );
       this.tools.set(event.id, tool);
       this.transcript.addChild(tool);
       this.status = `running ${safeText(event.name)} · Esc to cancel`;

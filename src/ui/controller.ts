@@ -19,37 +19,64 @@ export class SessionController {
   private options: SessionOptions;
   closed = false;
   constructor(factory: (system: string) => Agent, view: SessionView, options: SessionOptions = { defaultSystem: '' }) {
-    this.factory = factory; this.view = view; this.options = { ...options };
+    this.factory = factory;
+    this.view = view;
+    this.options = { ...options };
     this.agent = factory(options.defaultSystem);
   }
-  get busy() { return !!this.abort; }
+  get busy() {
+    return !!this.abort;
+  }
   interrupt() {
-    if (this.abort) { this.abort.abort(); this.view.panel('STATUS', 'Cancellation requested. Waiting for the current operation to stop.'); }
-    else this.closed = true;
+    if (this.abort) {
+      this.abort.abort();
+      this.view.panel('STATUS', 'Cancellation requested. Waiting for the current operation to stop.');
+    } else this.closed = true;
   }
   async submit(raw: string) {
     if (this.closed) return;
     const input = raw.trim();
     if (!input) return;
-    if (this.busy) { this.view.panel('ERROR', 'A run is already active. Cancel it before submitting another input or command.'); return; }
-    if (input === '/quit' || input === '/exit') { this.closed = true; return; }
+    if (this.busy) {
+      this.view.panel('ERROR', 'A run is already active. Cancel it before submitting another input or command.');
+      return;
+    }
+    if (input === '/quit' || input === '/exit') {
+      this.closed = true;
+      return;
+    }
     if (input === '/help') {
-      this.view.panel('STATUS', '/create <description>  Set system instructions; start a fresh session\n/new                   Reset session and default instructions\n/help                  Show commands\n/quit                  Exit' + (this.options.helpNote ? `\n${this.options.helpNote}` : ''));
+      this.view.panel(
+        'STATUS',
+        '/create <description>  Set system instructions; start a fresh session\n/new                   Reset session and default instructions\n/help                  Show commands\n/quit                  Exit' +
+          (this.options.helpNote ? `\n${this.options.helpNote}` : ''),
+      );
       return;
     }
     if (input === '/new') {
       this.agent = this.factory(this.options.defaultSystem);
       this.view.reset?.();
-      this.view.panel('STATUS', 'New session. History cleared; default instructions restored.'); return;
+      this.view.panel('STATUS', 'New session. History cleared; default instructions restored.');
+      return;
     }
     if (input === '/create' || input.startsWith('/create ')) {
       const system = input.slice(7).trim();
-      if (!system) { this.view.panel('ERROR', 'Usage: /create <plain-language agent instructions>'); return; }
+      if (!system) {
+        this.view.panel('ERROR', 'Usage: /create <plain-language agent instructions>');
+        return;
+      }
       this.agent = this.factory(system);
       this.view.reset?.();
-      this.view.panel('STATUS', `Agent configured; history cleared.\nSystem instruction: ${system}\nThis sets configuration, not a generated workflow.${this.options.configurationNote ? `\n${this.options.configurationNote}` : ''}`); return;
+      this.view.panel(
+        'STATUS',
+        `Agent configured; history cleared.\nSystem instruction: ${system}\nThis sets configuration, not a generated workflow.${this.options.configurationNote ? `\n${this.options.configurationNote}` : ''}`,
+      );
+      return;
     }
-    if (input.startsWith('/')) { this.view.panel('ERROR', 'Unknown command. Try /help.'); return; }
+    if (input.startsWith('/')) {
+      this.view.panel('ERROR', 'Unknown command. Try /help.');
+      return;
+    }
     this.abort = new AbortController();
     this.view.panel('USER', input);
     try {
@@ -62,7 +89,9 @@ export class SessionController {
     } catch (error) {
       this.view.panel('ERROR', error instanceof Error ? error.message : String(error));
       return;
-    } finally { this.abort = undefined; }
+    } finally {
+      this.abort = undefined;
+    }
   }
 }
 
@@ -73,7 +102,10 @@ export async function interactive(controller: SessionController, input: Readable
   rl.setPrompt('YOU › ');
   let queue = Promise.resolve();
   let ended = false;
-  const interrupt = () => { controller.interrupt(); if (controller.closed) rl.close(); };
+  const interrupt = () => {
+    controller.interrupt();
+    if (controller.closed) rl.close();
+  };
   rl.on('SIGINT', interrupt);
   process.on('SIGINT', interrupt);
   const done = new Promise<void>((resolve) => {
@@ -84,9 +116,17 @@ export async function interactive(controller: SessionController, input: Readable
         else if (terminal && !ended) rl.prompt();
       });
     });
-    rl.once('close', () => { ended = true; resolve(); });
+    rl.once('close', () => {
+      ended = true;
+      resolve();
+    });
   });
   if (terminal) rl.prompt();
-  try { await done; await queue; }
-  finally { process.off('SIGINT', interrupt); rl.close(); }
+  try {
+    await done;
+    await queue;
+  } finally {
+    process.off('SIGINT', interrupt);
+    rl.close();
+  }
 }
