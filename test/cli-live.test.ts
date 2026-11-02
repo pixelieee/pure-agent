@@ -36,13 +36,13 @@ test('public document tool rejects file, directory, and root symlinks', async ()
   const root = await fixture(); const outside = await fixture();
   try {
     await rm(join(root, 'README.md'));
-    await symlink(join(outside, 'README.md'), join(root, 'README.md'));
+    await symlink(join(outside, 'README.md'), join(root, 'README.md'), 'file');
     await assert.rejects(createProjectFileTool(root).execute({ path: 'README.md' }, ctx()), /UNAVAILABLE/);
     await rm(join(root, 'docs'), { recursive: true });
     await writeFile(join(outside, 'dependency-decisions.md'), 'outside data');
-    await symlink(outside, join(root, 'docs'));
+    await symlink(outside, join(root, 'docs'), 'dir');
     await assert.rejects(createProjectFileTool(root).execute({ path: 'docs/dependency-decisions.md' }, ctx()), /UNAVAILABLE/);
-    await symlink(outside, join(root, 'linked-root'));
+    await symlink(outside, join(root, 'linked-root'), 'dir');
     await assert.rejects(createProjectFileTool(join(root, 'linked-root')).execute({ path: 'README.md' }, ctx()), /UNAVAILABLE/);
   } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
 });

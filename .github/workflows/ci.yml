@@ -13,14 +13,23 @@ concurrency:
 
 jobs:
   acceptance:
-    name: Node 24 / Ubuntu
-    runs-on: ubuntu-latest
+    name: Node 24 / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
-      # A cold cache catches accidental reliance on prior registry metadata.
-      npm_config_cache: /tmp/pure-agent-npm-cache-${{ github.run_id }}-${{ github.run_attempt }}
       npm_config_registry: https://registry.npmjs.org
     steps:
+      # runner.temp is available at step scope and is native to each OS.
+      # No setup-node cache: the consumer must reuse only this job's tarballs.
+      - name: Select isolated cold npm cache
+        shell: pwsh
+        run: |
+          $cache = Join-Path "${{ runner.temp }}" "pure-agent-npm-cache-${{ github.run_id }}-${{ github.run_attempt }}"
+          "npm_config_cache=$cache" >> $env:GITHUB_ENV
       - name: Check out source
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -29,6 +38,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: '24.x'
+          package-manager-cache: false
       # Network is used for toolchain/dependency setup, never for live model tests.
       # npm ci caches locked tarballs; the offline consumer reuses their lock graph.
       - name: Install locked dependencies without lifecycle scripts

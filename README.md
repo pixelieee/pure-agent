@@ -83,6 +83,8 @@ npm run check
 npm run test:package
 ```
 
+CI 配置包含 Ubuntu 和 Windows（Node.js 24），两者均执行完整离线检查与安装包验收；实际支持以对应提交的 runner 结果为准。包测试使用带空格的临时目录，通过 npm 的平台 CLI shim 执行多词 prompt。Windows 的文件/目录符号链接测试需要启用开发者模式或具有创建符号链接权限；权限不足会明确失败，不会跳过安全断言。
+
 安装本地 tarball 后，SDK 入口为 `pure-agent`，CLI 命令为 `pure-agent --demo`。npm 包仅包含编译后的 JS/类型声明、README、Markdown 文档和 SVG；完整源码 ZIP 另含测试、DOT 和 PNG。
 
 ## 真实模型与只读项目工具

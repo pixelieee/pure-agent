@@ -7,15 +7,20 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// npm supplies its JS entry when invoked through npm run test:package. Running
+// Node directly avoids npm.cmd / POSIX executable and shell-quoting differences.
+const npmCli = process.env.npm_execpath;
+assert.ok(npmCli, 'Run this test with npm run test:package');
+const npm = (args, cwd) => run(process.execPath, [npmCli, ...args], cwd);
 const run = (command, args, cwd) => execFileSync(command, args, {
   cwd, encoding: 'utf8', timeout: 60_000,
   env: { ...process.env, NO_COLOR: '1', npm_config_update_notifier: 'false' },
 });
 
 test('private tarball installs as a JavaScript SDK and executable demo CLI', () => {
-  const consumer = mkdtempSync(join(tmpdir(), 'pure-agent-package-'));
+  const consumer = mkdtempSync(join(tmpdir(), 'pure agent package-'));
   try {
-    const [packed] = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', consumer], root));
+    const [packed] = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', consumer], root));
     const paths = packed.files.map(file => file.path);
     assert.ok(paths.includes('dist/index.js'));
     assert.ok(paths.includes('dist/index.d.ts'));
@@ -27,7 +32,12 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
     assert.equal(sourceLock.lockfileVersion, 3);
     assert.deepEqual(sourceLock.packages[''].dependencies, manifest.dependencies);
     const dependencies = { [manifest.name]: `file:${packed.filename}` };
-    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies }));
+    writeFileSync(join(consumer, 'package.json'), JSON.stringify({
+      private: true, type: 'module', dependencies,
+      // Static script text; npm resolves the actual platform bin shim. Keep a
+      // multiword prompt to verify argument quoting, not merely entry loading.
+      scripts: { 'smoke:cli': 'pure-agent --demo --prompt "Package smoke test"' },
+    }));
     // npm ci caches locked tarballs, not the registry packuments needed by an
     // unlocked install. Reuse the exact runtime graph (including integrity and
     // nested paths), adding the actual packed artifact as the consumer's root.
@@ -49,7 +59,7 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
         },
       },
     }));
-    run('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], consumer);
+    npm(['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], consumer);
     const installed = JSON.parse(readFileSync(join(consumer, 'node_modules/pure-agent/package.json'), 'utf8'));
     assert.equal(installed.private, true);
     assert.deepEqual(installed.dependencies, manifest.dependencies);
@@ -70,8 +80,8 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
       const result: RunResult = await createAgent({ model }).run('Hello');
       result.status satisfies 'completed' | 'blocked' | 'cancelled' | 'limit';
     `);
-    run(join(root, 'node_modules/.bin/tsc'), ['--ignoreConfig', '--noEmit', '--strict', '--target', 'ES2023', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts'], consumer);
-    const output = run(join(consumer, 'node_modules/.bin/pure-agent'), ['--demo', '--prompt', 'Package smoke test'], consumer);
+    run(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '--ignoreConfig', '--noEmit', '--strict', '--target', 'ES2023', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts'], consumer);
+    const output = npm(['run', '--silent', 'smoke:cli'], consumer);
     assert.match(output, /DEMO/);
     assert.match(output, /Package smoke test/i);
   } finally {
