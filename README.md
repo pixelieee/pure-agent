@@ -7,7 +7,7 @@
 - 单个会话内的模型 → 工具 → 观察 → 模型循环。
 - 注入模型与工具；有界执行、可观察事件、协作式取消。
 - SDK、CLI 和 Dark Deco 风格终端界面共用执行核心。
-- 提供显式离线演示与 OpenAI 适配器；真实模式需要安全配置 API Key，已通过三轮真实项目资料交互测试（范围见 docs/live-test-results.json）。
+- 提供显式离线演示与 OpenAI 适配器；真实模式需要安全配置 API Key，已通过三轮真实项目资料交互测试（范围见 [当前验收记录](docs/live-acceptance.md)，早期记录保留于 docs/live-test-results.json）。
 - 不实现 Team、多 Agent 编排、后台调度或管理平台。
 
 ## 本地运行
@@ -56,11 +56,11 @@ node src/cli.ts --demo --prompt "整理这条演示笔记"
 
 ## 当前验证
 
-2026-11-02 状态快照：主干已合并 PR #1–#8，包括显式配置、流式输出、Windows 安装包验收、可选 SDK 工作区读取工具、CI 汇总门禁与严格静态检查。已接受主干提交为 [`3f65d5e`](https://github.com/pixelieee/pure-agent/commit/3f65d5efa3fd5169ecaae3d3e02b6b98ba7e59fe)；独立验收及 [双平台 CI run 41495942252](https://github.com/pixelieee/pure-agent/actions/runs/41495942252) 记录：Ubuntu、Windows 均通过 165 项离线测试及 2 项安装包测试，`Offline acceptance gate` 通过。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
+2026-11-02 状态快照：主干已合并至 PR #11，包括显式配置、流式输出、Windows 安装包验收、可选 SDK 工作区读取工具、CI 汇总门禁、严格静态检查及 Biome 格式 / lint 门禁与回归测试。主干提交为 [`eb054fe`](https://github.com/pixelieee/pure-agent/commit/eb054fed081bf06328f9b3f736498d74159967f4)；[双平台 CI run 41502935573](https://github.com/pixelieee/pure-agent/actions/runs/41502935573) 记录 Ubuntu、Windows 均通过 170 项离线测试及 2 项安装包测试，`Offline acceptance gate` 通过。具体源码树、真实模型验证及未验证项见 [验收记录](docs/live-acceptance.md)。
 
-终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。真实模型记录只覆盖三轮限定项目资料交互与 Token 用量，不代表流式功能的真实模型验收、通用任务准确率或生产验收。
+终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。当前真实模型记录覆盖三轮限定项目资料交互、流式增量事件与 Token 用量；不代表 GUI 验收、通用任务准确率或生产验收。
 
-安装开发依赖后执行 `npm run check`，其中类型检查已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 和 `noImplicitReturns`；这不等于已采用完整 lint / format 门禁。GitHub 分支保护仍待确认，不能把汇总 CI 检查等同于已强制执行的保护规则。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
+安装开发依赖后执行 `npm run check`，其中类型检查已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 和 `noImplicitReturns`；Biome 2.6.4 的只读格式与推荐 lint 门禁已纳入 `check`，并有门禁负向回归测试；具体范围见 [依赖决策](docs/dependency-decisions.md)。GitHub 分支保护仍待确认，不能把汇总 CI 检查等同于已强制执行的保护规则。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
 
 架构图见 `docs/architecture.png`，可编辑源文件为 `docs/architecture.dot`，矢量版本为 `docs/architecture.svg`。使用 Graphviz 重建：`dot -Tsvg docs/architecture.dot -o docs/architecture.svg`、`dot -Tpng docs/architecture.dot -o docs/architecture.png`。
 
