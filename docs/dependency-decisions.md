@@ -7,6 +7,7 @@
 | 能力 | 选择 | 理由 |
 | --- | --- | --- |
 | 执行循环、状态、事件、取消策略 | 自有实现 | 这是产品的基本行为，需要清晰、可测试、可修改。 |
+| 真实模型传输 | 官方 OpenAI SDK 7.47.0 + 薄 Responses 适配器 | 复用传输与协议处理，规范化输出、取消、截断和数值用量；不手写 SSE，也不把用量等同于费用硬限额。 |
 | 参数校验 | Ajv 8.20.0，MIT | 复用成熟的 draft-07 实现，避免 Schema 与手写字段校验分叉。关闭 coercion/defaults/removal。 |
 | 终端字符串宽度 | string-width 8.3.0，MIT | 不自行维护 CJK/emoji 宽度表。 |
 | Unicode 字素分段 | Node Intl.Segmenter | 原生标准能力，不自行实现组合字符/ZWJ 分段。 |
@@ -31,8 +32,6 @@
 
 ## 等有实际需求再加入
 
-- 真实模型：官方 SDK 处理传输，薄适配器规范化输出、取消、截断和费用信息。不手写 SSE 协议。
 - MCP：优先官方 TypeScript SDK，保留命名空间、Schema 校验和权限边界，不自己写 OAuth。
-- Markdown：有实际终端渲染需求再接入成熟 parser。
 
 来源：[Ajv](https://github.com/ajv-validator/ajv)、[Ajv options](https://ajv.js.org/options.html)、[string-width](https://github.com/sindresorhus/string-width)、[wrap-ansi](https://github.com/chalk/wrap-ansi)、[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)。
