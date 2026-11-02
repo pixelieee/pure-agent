@@ -25,11 +25,13 @@ export interface Tool extends ToolDefinition {
   execute: (args: any, ctx: { signal: AbortSignal }) => Promise<unknown>;
 }
 export interface Model {
-  complete: (messages: Message[], tools: ToolDefinition[], signal: AbortSignal) => Promise<Message>;
+  complete: (messages: Message[], tools: ToolDefinition[], signal: AbortSignal,
+    onTextDelta?: (text: string) => void | Promise<void>) => Promise<Message>;
 }
 /** Discriminants give observers an exhaustive, type-safe execution protocol. */
 export type AgentEvent =
   | { type: 'model_start'; step: number }
+  | { type: 'assistant_delta'; text: string; step: number }
   | { type: 'assistant'; text: string; step: number }
   | { type: 'tool_start'; name: string; id: string; args: unknown }
   | { type: 'tool_end'; name: string; id: string; result: string }
@@ -144,11 +146,27 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
           await emit({ type: 'model_start', step: steps + 1 });
           if (signal.aborted) return await done('cancelled');
           steps++;
-          const reply = structuredClone(await model.complete(
-            structuredClone(history),
-            [...registry.values()].map(({ name, description, parameters }) => ({ name, description, parameters: structuredClone(parameters) })),
-            signal,
-          ));
+          let acceptingDeltas = true;
+          let deltaDelivery = Promise.resolve();
+          let reply: Message;
+          try {
+            reply = structuredClone(await model.complete(
+              structuredClone(history),
+              [...registry.values()].map(({ name, description, parameters }) => ({ name, description, parameters: structuredClone(parameters) })),
+              signal,
+              (delta) => {
+                if (!acceptingDeltas || signal.aborted || typeof delta !== 'string' || !delta) return Promise.resolve();
+                const event: AgentEvent = { type: 'assistant_delta', text: delta, step: steps };
+                // Injected models may ignore the returned promise. Keep observation ordered anyway.
+                deltaDelivery = deltaDelivery.then(() => emit(event));
+                return deltaDelivery;
+              },
+            ));
+          } finally {
+            acceptingDeltas = false;
+            // Drain accepted callbacks before assistant/done, including failures and cancellation.
+            await deltaDelivery;
+          }
           if (signal.aborted) return await done('cancelled');
           const assistant = assistantMessage(reply);
           const calls = assistant.tool_calls ?? [];

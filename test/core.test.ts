@@ -248,3 +248,45 @@ test('opaque provider continuation data survives tool turns without shared mutab
   const saved = agent.messages.find(m => m.role === 'assistant')?.providerData;
   assert.deepEqual(saved, { kind: 'test.provider', data: { items: [{ id: 'continuation-1' }] } });
 });
+
+for (const outcome of ['completed', 'blocked', 'cancelled'] as const) {
+  test(`unawaited deltas drain in order before ${outcome}, ignoring late callbacks`, { timeout: 2000 }, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const observing = new Promise<void>(resolve => { entered = resolve; });
+    let callback!: NonNullable<Parameters<Model['complete']>[3]>;
+    const abort = new AbortController();
+    const events: string[] = [];
+    let finished = false;
+    const agent = createAgent({ model: {
+      async complete(_messages, _tools, _signal, onTextDelta) {
+        callback = onTextDelta!;
+        void callback('first');
+        void callback('second');
+        if (outcome === 'blocked') throw new Error('model failed');
+        if (outcome === 'cancelled') abort.abort();
+        return final;
+      },
+    } });
+    const run = agent.run('Go', { signal: abort.signal, onEvent: async event => {
+      if (event.type === 'assistant_delta' && event.text === 'first') {
+        entered(); await gate;
+      }
+      events.push(event.type === 'assistant_delta' ? event.text : event.type);
+      if (event.type === 'assistant_delta') throw new Error('observer failed');
+    } }).then(result => { finished = true; return result; });
+    await observing;
+    // Allow the model promise to settle while the first observer remains suspended.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await callback('late while draining');
+    assert.equal(finished, false);
+    assert.deepEqual(events, ['model_start']);
+    release();
+    assert.equal((await run).status, outcome);
+    assert.deepEqual(events, ['model_start', 'first', 'second', ...(outcome === 'completed' ? ['assistant'] : []), 'done']);
+    await callback('late after done');
+    assert.equal(events.at(-1), 'done');
+    assert.equal(agent.messages.filter(message => message.role === 'assistant').length, outcome === 'completed' ? 1 : 0);
+  });
+}
