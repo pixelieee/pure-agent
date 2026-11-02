@@ -56,7 +56,7 @@ node src/cli.ts --demo --prompt "整理这条演示笔记"
 
 ## 当前验证
 
-2026-11-02 状态快照：远程主干 `1a2e14cb030a77c94be6471d09dfa25fced958c7` 已合并初始化、显式配置与流式输出（PR #1–#3）。组合验收记录为 139 项离线测试及 1 项安装包测试通过，PR #3 的 [CI run 41492518623](https://github.com/pixelieee/pure-agent/actions/runs/41492518623) 成功；冷缓存安装包问题已修复。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
+2026-11-02 状态快照：主干已合并初始化、显式配置、流式输出与 Windows 安装包验收。独立验收及 [双平台 CI](https://github.com/pixelieee/pure-agent/actions/runs/41493013469) 记录：Ubuntu、Windows 均通过 139 项离线测试及 1 项安装包测试；冷缓存安装包问题已修复。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
 
 终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。真实模型记录只覆盖三轮限定项目资料交互与 Token 用量，不代表流式功能的真实模型验收、通用任务准确率或生产验收。
 
@@ -86,6 +86,8 @@ npm ci --ignore-scripts
 npm run check
 npm run test:package
 ```
+
+CI 配置包含 Ubuntu 和 Windows（Node.js 24），两者均执行完整离线检查与安装包验收；实际支持以对应提交的 runner 结果为准。包测试使用带空格的临时目录，通过 npm 的平台 CLI shim 执行多词 prompt。Windows 的文件/目录符号链接测试需要启用开发者模式或具有创建符号链接权限；权限不足会明确失败，不会跳过安全断言。
 
 安装本地 tarball 后，SDK 入口为 `pure-agent`，CLI 命令为 `pure-agent --demo`。npm 包仅包含编译后的 JS/类型声明、README、Markdown 文档和 SVG；完整源码 ZIP 另含测试、DOT 和 PNG。
 

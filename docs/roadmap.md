@@ -4,21 +4,20 @@
 
 ## 已合并主干
 
-2026-11-02 状态快照：远程 `main` 为 `1a2e14cb030a77c94be6471d09dfa25fced958c7`，已合并 [初始化 PR #1](https://github.com/pixelieee/pure-agent/pull/1)、[配置 PR #2](https://github.com/pixelieee/pure-agent/pull/2) 和 [流式输出 PR #3](https://github.com/pixelieee/pure-agent/pull/3)。
+2026-11-02 状态快照：主干已合并 [初始化 PR #1](https://github.com/pixelieee/pure-agent/pull/1)、[配置 PR #2](https://github.com/pixelieee/pure-agent/pull/2)、[流式输出 PR #3](https://github.com/pixelieee/pure-agent/pull/3) 、[Windows 安装包验收 PR #5](https://github.com/pixelieee/pure-agent/pull/5) 和 [CI 汇总门禁 PR #7](https://github.com/pixelieee/pure-agent/pull/7)。
 
 - 单会话模型 → 工具 → 观察循环，注入模型与工具，顺序执行、步数上限、协作式取消和可观察结果。
 - SDK 与 CLI 共用核心；确定性离线演示、官方 OpenAI Responses 适配器与限定文件的只读项目工具。
 - 显式 JSON 会话配置：内置默认值 < 配置文件 < 显式 CLI 参数；不自动发现配置，不允许凭据或端点覆盖。详见 [配置文档](configuration.md)。
 - 官方 SDK 流式输出与 Pi TUI 增量 Markdown 渲染；管道保留完整回复输出，中断局部文本不写入会话历史。
 - 独立 Pi TUI 模块承载编辑与终端交互，Dark Deco 视觉层不引入另一套执行核心。
-- JSON Schema 参数校验、SDK / CLI 本地安装包验收与离线模型 CI；冷缓存安装包问题已修复。
+- JSON Schema 参数校验、SDK / CLI 本地安装包验收与离线模型 CI；冷缓存安装包问题已修复。固定检查 `Offline acceptance gate` 汇总双平台结果，拒绝失败、取消或跳过；GitHub 分支保护尚未配置。
 
-组合验收记录为 139 项离线测试与 1 项安装包测试通过；PR #3 的 [CI run 41492518623](https://github.com/pixelieee/pure-agent/actions/runs/41492518623) 成功。本次文档更新未重新运行测试，不能把该历史记录当作后续提交验收。真实模型记录只覆盖三轮限定项目资料交互，不是流式功能的真实模型验收、通用准确率、生产验收或账户花费保证。
+独立验收与 [CI run 41493725748](https://github.com/pixelieee/pure-agent/actions/runs/41493725748) 记录：Ubuntu 与 Windows 均通过 139 项离线测试及 1 项安装包测试，汇总门禁通过。本次文档更新未重新运行测试，不能把该历史记录当作后续提交验收。真实模型记录只覆盖三轮限定项目资料交互，不是流式功能的真实模型验收、通用准确率、生产验收或账户花费保证。
 
 ## 开发中：不是主干能力
 
-- [Windows 安装包验收 PR #5](https://github.com/pixelieee/pure-agent/pull/5)：仍待集成，不能宣称当前主干已通过 Windows 验收。
-- 扩展项目读取能力：仍待集成；主干真实模式仍只有四个指定文件的只读工具，不提供任意文件读取、shell 或写入。
+- [扩展项目读取 PR #6](https://github.com/pixelieee/pure-agent/pull/6)：仍待集成；主干真实模式仍只有四个指定文件的只读工具，不提供任意文件读取、shell 或写入。
 
 分支可能独立演进；测试数量和成功记录必须绑定具体提交。合并前的组合验证不代表主干已有该能力。
 
