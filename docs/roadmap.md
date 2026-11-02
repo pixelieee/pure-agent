@@ -4,7 +4,7 @@
 
 ## 已合并主干
 
-2026-11-02 状态快照：主干已合并 PR #1–#8：初始化、显式配置、流式输出、公开文档、Windows 安装包验收、[可选 SDK 工作区读取 PR #6](https://github.com/pixelieee/pure-agent/pull/6)、[CI 汇总门禁 PR #7](https://github.com/pixelieee/pure-agent/pull/7) 与 [严格静态检查 PR #8](https://github.com/pixelieee/pure-agent/pull/8)。已接受主干提交为 [`3f65d5e`](https://github.com/pixelieee/pure-agent/commit/3f65d5efa3fd5169ecaae3d3e02b6b98ba7e59fe)。
+2026-11-02 状态快照：主干已合并至 PR #11，包含初始化、显式配置、流式输出、公开文档、Windows 安装包验收、可选 SDK 工作区读取、CI 汇总门禁、严格静态检查及 Biome 格式 / lint 门禁与回归测试。主干提交为 [`eb054fe`](https://github.com/pixelieee/pure-agent/commit/eb054fed081bf06328f9b3f736498d74159967f4)。
 
 - 单会话模型 → 工具 → 观察循环，注入模型与工具，顺序执行、步数上限、协作式取消和可观察结果。
 - SDK 与 CLI 共用核心；确定性离线演示、官方 OpenAI Responses 适配器与限定文件的只读项目工具。
@@ -13,15 +13,9 @@
 - 官方 SDK 流式输出与 Pi TUI 增量 Markdown 渲染；管道保留完整回复输出，中断局部文本不写入会话历史。
 - 独立 Pi TUI 模块承载编辑与终端交互，Dark Deco 视觉层不引入另一套执行核心。
 - JSON Schema 参数校验、SDK / CLI 本地安装包验收与离线模型 CI；冷缓存安装包问题已修复。固定检查 `Offline acceptance gate` 汇总双平台结果，拒绝失败、取消或跳过；GitHub 分支保护仍待用户确认，尚未配置。
-- TypeScript 已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 与 `noImplicitReturns`；仅代表这四项静态检查已采用，不代表完整 lint / format 门禁。
+- TypeScript 已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 与 `noImplicitReturns`；另已采用 Biome 2.6.4 只读格式与推荐 lint 门禁，并纳入 `check` 和 CI；覆盖范围见 [依赖决策](dependency-decisions.md)。
 
-独立验收与 [CI run 41495942252](https://github.com/pixelieee/pure-agent/actions/runs/41495942252) 记录：Ubuntu 与 Windows 均通过 165 项离线测试及 2 项安装包测试，汇总门禁通过。本次文档更新未重新运行测试，不能把该历史记录当作后续提交验收。真实模型记录只覆盖三轮限定项目资料交互，不是流式功能的真实模型验收、通用准确率、生产验收或账户花费保证。
-
-## 开发中：不是主干能力
-
-- 完整 lint / format 门禁仍在准备中，尚未采用；不把开发分支上的方案写成主干能力。
-
-分支可能独立演进；测试数量和成功记录必须绑定具体提交。合并前的组合验证不代表主干已有该能力。
+[CI run 41502935573](https://github.com/pixelieee/pure-agent/actions/runs/41502935573) 记录 Ubuntu 与 Windows 均通过 170 项离线测试及 2 项安装包测试，汇总门禁通过。当前三轮真实模型测试覆盖限定项目资料、流式增量和数值用量，不是 GUI、通用准确率、生产验收或账户花费保证。源码树与证据限制见 [当前验收记录](live-acceptance.md)。测试记录绑定具体源码，不能自动外推到后续提交。
 
 ## 后续顺序与完成证据
 
