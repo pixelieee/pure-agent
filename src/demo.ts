@@ -5,9 +5,18 @@ import type { Model, Tool } from './core.ts';
 export const noteTool: Tool = {
   name: 'format_note',
   description: 'Format a supplied string into a short note, without external side effects.',
-  parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false },
-  validate: (args) => !!args && typeof args === 'object' && !Array.isArray(args)
-    && Object.keys(args).length === 1 && typeof (args as { text?: unknown }).text === 'string',
+  parameters: {
+    type: 'object',
+    properties: { text: { type: 'string' } },
+    required: ['text'],
+    additionalProperties: false,
+  },
+  validate: (args) =>
+    !!args &&
+    typeof args === 'object' &&
+    !Array.isArray(args) &&
+    Object.keys(args).length === 1 &&
+    typeof (args as { text?: unknown }).text === 'string',
   async execute({ text }: { text: string }, { signal }) {
     signal.throwIfAborted();
     return { note: text.trim().replace(/\s+/gu, ' '), characters: [...text.trim()].length };
@@ -21,12 +30,22 @@ export function createDemoModel(): Model {
       signal.throwIfAborted();
       const last = messages.at(-1);
       if (last?.role === 'tool') {
-        return { role: 'assistant', content: `DEMO · Tool returned ${last.content}\nThis is a scripted fixture, not model reasoning.` };
+        return {
+          role: 'assistant',
+          content: `DEMO · Tool returned ${last.content}\nThis is a scripted fixture, not model reasoning.`,
+        };
       }
       const text = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
       return {
-        role: 'assistant', content: 'DEMO · Calling the note formatter through the agent loop.',
-        tool_calls: [{ id: `demo-${++sequence}`, type: 'function', function: { name: 'format_note', arguments: JSON.stringify({ text }) } }],
+        role: 'assistant',
+        content: 'DEMO · Calling the note formatter through the agent loop.',
+        tool_calls: [
+          {
+            id: `demo-${++sequence}`,
+            type: 'function',
+            function: { name: 'format_note', arguments: JSON.stringify({ text }) },
+          },
+        ],
       };
     },
   };

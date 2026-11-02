@@ -1,20 +1,36 @@
 import OpenAI from 'openai';
 import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
-import type { Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputItem, ResponseCreateParamsStreaming, ResponseStreamEvent } from 'openai/resources/responses/responses';
+import type {
+  Response,
+  ResponseCreateParamsNonStreaming,
+  ResponseInputItem,
+  ResponseOutputItem,
+  ResponseCreateParamsStreaming,
+  ResponseStreamEvent,
+} from 'openai/resources/responses/responses';
 import type { Message, Model, ToolCall } from '../core.ts';
 
 type ProviderResponse = Pick<Response, 'output' | 'status' | 'usage' | 'error' | 'incomplete_details'>;
 /** Narrow transport seam; the adapter never executes tools. */
 export interface OpenAIClient {
-  responses: { create: (body: ResponseCreateParamsNonStreaming,
-    options: { signal: AbortSignal; maxRetries: number; timeout: number }) => Promise<ProviderResponse>;
+  responses: {
+    create: (
+      body: ResponseCreateParamsNonStreaming,
+      options: { signal: AbortSignal; maxRetries: number; timeout: number },
+    ) => Promise<ProviderResponse>;
     /** Official SDK streaming helper; optional for existing injected transports. */
-    stream?: (body: ResponseCreateParamsStreaming,
-      options: { signal: AbortSignal; maxRetries: number; timeout: number }) => AsyncIterable<ResponseStreamEvent>;
+    stream?: (
+      body: ResponseCreateParamsStreaming,
+      options: { signal: AbortSignal; maxRetries: number; timeout: number },
+    ) => AsyncIterable<ResponseStreamEvent>;
   };
 }
 export interface OpenAIUsage {
-  promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number; reasoningTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
 }
 export interface OpenAIModelOptions {
   apiKey?: string;
@@ -32,13 +48,16 @@ const nonempty = (value: unknown): value is string => typeof value === 'string' 
 /** Accept only the output capabilities this adapter supports; preserve opaque reasoning. */
 function decodeOutput(output: unknown): { content: string | null; calls: ToolCall[]; output: ResponseOutputItem[] } {
   if (!Array.isArray(output) || !output.length) throw fail('INVALID_RESPONSE');
-  const texts: string[] = []; const calls: ToolCall[] = []; const ids = new Set<string>();
+  const texts: string[] = [];
+  const calls: ToolCall[] = [];
+  const ids = new Set<string>();
   for (const item of output) {
     if (!item || typeof item !== 'object') throw fail('INVALID_RESPONSE');
     if (item.status !== undefined && item.status !== 'completed') throw fail('INCOMPLETE_RESPONSE');
     switch (item.type) {
       case 'message':
-        if (item.role !== 'assistant' || !nonempty(item.id) || !Array.isArray(item.content)) throw fail('INVALID_RESPONSE');
+        if (item.role !== 'assistant' || !nonempty(item.id) || !Array.isArray(item.content))
+          throw fail('INVALID_RESPONSE');
         for (const part of item.content) {
           if (part?.type === 'refusal') throw fail('REFUSAL');
           if (part?.type !== 'output_text' || typeof part.text !== 'string') throw fail('INVALID_RESPONSE');
@@ -46,20 +65,43 @@ function decodeOutput(output: unknown): { content: string | null; calls: ToolCal
         }
         break;
       case 'function_call': {
-        if (!nonempty(item.call_id) || ids.has(item.call_id) || !nonempty(item.name) || typeof item.arguments !== 'string') throw fail('INVALID_TOOL_CALL');
+        if (
+          !nonempty(item.call_id) ||
+          ids.has(item.call_id) ||
+          !nonempty(item.name) ||
+          typeof item.arguments !== 'string'
+        )
+          throw fail('INVALID_TOOL_CALL');
         let args: unknown;
-        try { args = JSON.parse(item.arguments); } catch { throw fail('INVALID_TOOL_CALL'); }
+        try {
+          args = JSON.parse(item.arguments);
+        } catch {
+          throw fail('INVALID_TOOL_CALL');
+        }
         if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_TOOL_CALL');
         ids.add(item.call_id);
         calls.push({ id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments } });
         break;
       }
       case 'reasoning':
-        if (!nonempty(item.id) || !Array.isArray(item.summary)
-          || item.summary.some((part: any) => part?.type !== 'summary_text' || typeof part.text !== 'string')
-          || (item.encrypted_content != null && typeof item.encrypted_content !== 'string')) throw fail('INVALID_RESPONSE');
+        if (
+          !nonempty(item.id) ||
+          !Array.isArray(item.summary) ||
+          item.summary.some(
+            (part: unknown) =>
+              !part ||
+              typeof part !== 'object' ||
+              !('type' in part) ||
+              part.type !== 'summary_text' ||
+              !('text' in part) ||
+              typeof part.text !== 'string',
+          ) ||
+          (item.encrypted_content != null && typeof item.encrypted_content !== 'string')
+        )
+          throw fail('INVALID_RESPONSE');
         break;
-      default: throw fail('UNSUPPORTED_OUTPUT');
+      default:
+        throw fail('UNSUPPORTED_OUTPUT');
     }
   }
   if (!texts.length && !calls.length) throw fail('INVALID_RESPONSE');
@@ -76,14 +118,28 @@ function wireMessages(messages: Message[]): ResponseInputItem[] {
       if (message.providerData.kind !== 'openai.responses') throw fail('INVALID_PROVIDER_DATA');
       const data = message.providerData.data as { output?: unknown } | null;
       const decoded = decodeOutput(data?.output);
-      if (decoded.content !== message.content || JSON.stringify(decoded.calls) !== JSON.stringify(message.tool_calls ?? [])) throw fail('INVALID_PROVIDER_DATA');
-      try { input.push(...toResponseInputItems(decoded.output)); } catch { throw fail('INVALID_PROVIDER_DATA'); }
+      if (
+        decoded.content !== message.content ||
+        JSON.stringify(decoded.calls) !== JSON.stringify(message.tool_calls ?? [])
+      )
+        throw fail('INVALID_PROVIDER_DATA');
+      try {
+        input.push(...toResponseInputItems(decoded.output));
+      } catch {
+        throw fail('INVALID_PROVIDER_DATA');
+      }
     } else {
       if (typeof message.content === 'string') input.push({ role: message.role, content: message.content });
       else if (message.role !== 'assistant' || !message.tool_calls?.length) throw fail('INVALID_MESSAGE');
-      if (message.role === 'assistant') for (const call of message.tool_calls ?? []) {
-        input.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments });
-      }
+      if (message.role === 'assistant')
+        for (const call of message.tool_calls ?? []) {
+          input.push({
+            type: 'function_call',
+            call_id: call.id,
+            name: call.function.name,
+            arguments: call.function.arguments,
+          });
+        }
     }
   }
   return input;
@@ -94,8 +150,16 @@ function requestError(error: unknown, signal: AbortSignal): Error {
   if (error instanceof OpenAI.APIConnectionTimeoutError) return fail('TIMEOUT');
   if (error instanceof OpenAI.APIError) {
     if (error.status === 400) {
-      const params: Record<string, string> = { reasoning: 'REASONING', reasoning_effort: 'REASONING_EFFORT', tools: 'TOOLS', input: 'INPUT', max_output_tokens: 'MAX_OUTPUT_TOKENS', model: 'MODEL' };
-      const param = typeof error.param === 'string' && Object.hasOwn(params, error.param) ? params[error.param] : undefined;
+      const params: Record<string, string> = {
+        reasoning: 'REASONING',
+        reasoning_effort: 'REASONING_EFFORT',
+        tools: 'TOOLS',
+        input: 'INPUT',
+        max_output_tokens: 'MAX_OUTPUT_TOKENS',
+        model: 'MODEL',
+      };
+      const param =
+        typeof error.param === 'string' && Object.hasOwn(params, error.param) ? params[error.param] : undefined;
       return fail(param ? `INVALID_REQUEST_${param}` : 'INVALID_REQUEST');
     }
     if (error.status === 401) return fail('AUTHENTICATION');
@@ -113,20 +177,53 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
   const effort = options.reasoningEffort ?? 'low';
   const maxTokens = options.maxCompletionTokens ?? 1024;
   const onUsage = options.onUsage;
-  if (!nonempty(model) || !model.trim() || !Number.isSafeInteger(maxTokens) || maxTokens < 1 || maxTokens > 2048
-    || !['low', 'medium'].includes(effort) || (onUsage !== undefined && typeof onUsage !== 'function')) throw fail('INVALID_CONFIG');
+  if (
+    !nonempty(model) ||
+    !model.trim() ||
+    !Number.isSafeInteger(maxTokens) ||
+    maxTokens < 1 ||
+    maxTokens > 2048 ||
+    !['low', 'medium'].includes(effort) ||
+    (onUsage !== undefined && typeof onUsage !== 'function')
+  )
+    throw fail('INVALID_CONFIG');
   if (!options.client && (typeof options.apiKey !== 'string' || !options.apiKey.trim())) throw fail('MISSING_API_KEY');
   let client: OpenAIClient;
-  try { client = options.client ?? new OpenAI({ apiKey: options.apiKey, baseURL: 'https://api.openai.com/v1', maxRetries: 0, timeout: 30_000, logLevel: 'off' }); }
-  catch { throw fail('INVALID_CONFIG'); }
+  try {
+    client =
+      options.client ??
+      new OpenAI({
+        apiKey: options.apiKey,
+        baseURL: 'https://api.openai.com/v1',
+        maxRetries: 0,
+        timeout: 30_000,
+        logLevel: 'off',
+      });
+  } catch {
+    throw fail('INVALID_CONFIG');
+  }
   return {
     async complete(messages, tools, signal, onTextDelta) {
       if (signal.aborted) throw fail('ABORTED');
       const body: ResponseCreateParamsNonStreaming = {
-        model, input: wireMessages(messages), reasoning: { effort }, max_output_tokens: maxTokens,
-        store: false, include: ['reasoning.encrypted_content'], stream: false,
-        ...(tools.length ? { tools: tools.map(({ name, description, parameters }) => ({ type: 'function' as const,
-          name, description, parameters: structuredClone(parameters), strict: false })) } : {}),
+        model,
+        input: wireMessages(messages),
+        reasoning: { effort },
+        max_output_tokens: maxTokens,
+        store: false,
+        include: ['reasoning.encrypted_content'],
+        stream: false,
+        ...(tools.length
+          ? {
+              tools: tools.map(({ name, description, parameters }) => ({
+                type: 'function' as const,
+                name,
+                description,
+                parameters: structuredClone(parameters),
+                strict: false,
+              })),
+            }
+          : {}),
       };
       let response: ProviderResponse | undefined;
       let streamError = false;
@@ -136,8 +233,16 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
           for await (const event of client.responses.stream({ ...body, stream: true }, requestOptions)) {
             if (signal.aborted) break;
             if (event.type === 'response.output_text.delta' && nonempty(event.delta)) {
-              try { await onTextDelta(event.delta); } catch { /* Presentation cannot alter execution. */ }
-            } else if (event.type === 'response.completed' || event.type === 'response.incomplete' || event.type === 'response.failed') {
+              try {
+                await onTextDelta(event.delta);
+              } catch {
+                /* Presentation cannot alter execution. */
+              }
+            } else if (
+              event.type === 'response.completed' ||
+              event.type === 'response.incomplete' ||
+              event.type === 'response.failed'
+            ) {
               response = event.response;
               break; // Terminal accounting and output are accepted exactly once.
             } else if (event.type === 'error') {
@@ -146,26 +251,38 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
             }
           }
         } else response = await client.responses.create(body, requestOptions);
-      } catch (error) { throw requestError(error, signal); }
+      } catch (error) {
+        throw requestError(error, signal);
+      }
       if (onUsage && response?.usage) {
         const usage: OpenAIUsage = {
-          promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens,
-          totalTokens: response.usage.total_tokens, cachedTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+          promptTokens: response.usage.input_tokens,
+          completionTokens: response.usage.output_tokens,
+          totalTokens: response.usage.total_tokens,
+          cachedTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
           reasoningTokens: response.usage.output_tokens_details?.reasoning_tokens ?? 0,
         };
-        if (Object.values(usage).every(value => Number.isSafeInteger(value) && value >= 0)) {
-          try { await onUsage(usage); } catch { /* Accounting cannot alter execution. */ }
+        if (Object.values(usage).every((value) => Number.isSafeInteger(value) && value >= 0)) {
+          try {
+            await onUsage(usage);
+          } catch {
+            /* Accounting cannot alter execution. */
+          }
         }
       }
       if (signal.aborted) throw fail('ABORTED');
       if (streamError) throw fail('RESPONSE_FAILED');
-      if (response?.status === 'incomplete') throw fail(response.incomplete_details?.reason === 'max_output_tokens' ? 'TRUNCATED' : 'INCOMPLETE_RESPONSE');
+      if (response?.status === 'incomplete')
+        throw fail(response.incomplete_details?.reason === 'max_output_tokens' ? 'TRUNCATED' : 'INCOMPLETE_RESPONSE');
       if (response?.status === 'failed' || response?.error) throw fail('RESPONSE_FAILED');
       if (response?.status !== 'completed') throw fail('INCOMPLETE_RESPONSE');
       const decoded = decodeOutput(response.output);
-      return { role: 'assistant', content: decoded.content,
+      return {
+        role: 'assistant',
+        content: decoded.content,
         ...(decoded.calls.length ? { tool_calls: decoded.calls } : {}),
-        providerData: { kind: 'openai.responses', data: { output: decoded.output } } };
+        providerData: { kind: 'openai.responses', data: { output: decoded.output } },
+      };
     },
   };
 }

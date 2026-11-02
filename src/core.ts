@@ -22,11 +22,16 @@ export interface ToolDefinition {
 export interface Tool extends ToolDefinition {
   /** Optional domain check, applied after mandatory JSON Schema validation. */
   validate?: (args: unknown) => boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: Agent invokes heterogeneous callbacks after JSON Schema and optional domain validation; direct callers own validation.
   execute: (args: any, ctx: { signal: AbortSignal }) => Promise<unknown>;
 }
 export interface Model {
-  complete: (messages: Message[], tools: ToolDefinition[], signal: AbortSignal,
-    onTextDelta?: (text: string) => void | Promise<void>) => Promise<Message>;
+  complete: (
+    messages: Message[],
+    tools: ToolDefinition[],
+    signal: AbortSignal,
+    onTextDelta?: (text: string) => void | Promise<void>,
+  ) => Promise<Message>;
 }
 /** Discriminants give observers an exhaustive, type-safe execution protocol. */
 export type AgentEvent =
@@ -46,11 +51,19 @@ export interface RunOptions {
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void | Promise<void>;
 }
-export interface AgentOptions { model: Model; system?: string; tools?: Tool[]; maxSteps?: number }
+export interface AgentOptions {
+  model: Model;
+  system?: string;
+  tools?: Tool[];
+  maxSteps?: number;
+}
 
 function errorText(error: unknown): string {
-  try { return error instanceof Error ? String(error.message) : String(error); }
-  catch { return 'Unknown error'; }
+  try {
+    return error instanceof Error ? String(error.message) : String(error);
+  } catch {
+    return 'Unknown error';
+  }
 }
 const toolError = (error: string): string => JSON.stringify({ ok: false, error });
 
@@ -63,35 +76,54 @@ function assistantMessage(reply: Message): Message {
   if (!Array.isArray(calls)) throw new Error('Model returned invalid tool calls');
   const ids = new Set<string>();
   for (const call of calls) {
-    if (!call || typeof call.id !== 'string' || !call.id || ids.has(call.id)
-      || call.type !== 'function' || typeof call.function?.name !== 'string'
-      || typeof call.function?.arguments !== 'string') throw new Error('Model returned an invalid or duplicate tool call');
+    if (
+      !call ||
+      typeof call.id !== 'string' ||
+      !call.id ||
+      ids.has(call.id) ||
+      call.type !== 'function' ||
+      typeof call.function?.name !== 'string' ||
+      typeof call.function?.arguments !== 'string'
+    )
+      throw new Error('Model returned an invalid or duplicate tool call');
     ids.add(call.id);
   }
   if (reply.providerData !== undefined && (!reply.providerData || typeof reply.providerData.kind !== 'string')) {
     throw new Error('Model returned invalid provider continuation data');
   }
-  const assistant: Message = { role: 'assistant', content: reply.content,
+  const assistant: Message = {
+    role: 'assistant',
+    content: reply.content,
     ...(calls.length ? { tool_calls: calls } : {}),
-    ...(reply.providerData ? { providerData: structuredClone(reply.providerData) } : {}) };
+    ...(reply.providerData ? { providerData: structuredClone(reply.providerData) } : {}),
+  };
   return assistant;
 }
 
-interface RegisteredTool extends Tool { validateSchema: (args: unknown) => void }
+interface RegisteredTool extends Tool {
+  validateSchema: (args: unknown) => void;
+}
 
 type Emit = (event: AgentEvent) => Promise<void>;
 
 /** A single tool invocation. Never retries, and always yields a protocol-safe result. */
-async function invokeTool(call: ToolCall, registry: Map<string, RegisteredTool>, signal: AbortSignal, emit: Emit): Promise<string> {
+async function invokeTool(
+  call: ToolCall,
+  registry: Map<string, RegisteredTool>,
+  signal: AbortSignal,
+  emit: Emit,
+): Promise<string> {
   if (signal.aborted) return toolError('Cancelled before execution');
   const name = call.function.name;
   try {
     const tool = registry.get(name);
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     const args: unknown = JSON.parse(call.function.arguments);
-    if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be a JSON object');
+    if (!args || typeof args !== 'object' || Array.isArray(args))
+      throw new Error('Tool arguments must be a JSON object');
     tool.validateSchema(args);
-    if (tool.validate && tool.validate(structuredClone(args)) !== true) throw new Error(`Invalid arguments for tool: ${name}`);
+    if (tool.validate && tool.validate(structuredClone(args)) !== true)
+      throw new Error(`Invalid arguments for tool: ${name}`);
     await emit({ type: 'tool_start', name, id: call.id, args });
     if (signal.aborted) throw new Error('Cancelled before execution');
     const value = await tool.execute(args, { signal });
@@ -115,14 +147,17 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
   const registry = new Map<string, RegisteredTool>();
   for (const tool of tools) {
     if (!tool.name || registry.has(tool.name)) throw new Error(`Invalid or duplicate tool name: ${tool.name}`);
-    if (tool.validate !== undefined && typeof tool.validate !== 'function') throw new Error(`Tool ${tool.name} requires a validate function`);
+    if (tool.validate !== undefined && typeof tool.validate !== 'function')
+      throw new Error(`Tool ${tool.name} requires a validate function`);
     const parameters = structuredClone(tool.parameters);
     registry.set(tool.name, { ...tool, parameters, validateSchema: compileParameters(parameters) });
   }
   const history: Message[] = system ? [{ role: 'system', content: system }] : [];
   let running = false;
   return {
-    get messages(): Message[] { return structuredClone(history); },
+    get messages(): Message[] {
+      return structuredClone(history);
+    },
     async run(input: string, options: RunOptions = {}): Promise<RunResult> {
       if (running) throw new Error('This agent session is already running');
       if (typeof input !== 'string' || !input.trim()) throw new Error('Input must be a non-empty string');
@@ -131,7 +166,11 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
       let steps = 0;
       let text = '';
       const emit = async (event: AgentEvent) => {
-        try { await options.onEvent?.(structuredClone(event)); } catch { /* Observers never own execution. */ }
+        try {
+          await options.onEvent?.(structuredClone(event));
+        } catch {
+          /* Observers never own execution. */
+        }
       };
       const done = async (status: RunResult['status'], error?: string): Promise<RunResult> => {
         const result: RunResult = { status, text, steps, ...(error ? { error } : {}) };
@@ -150,18 +189,25 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
           let deltaDelivery = Promise.resolve();
           let reply: Message;
           try {
-            reply = structuredClone(await model.complete(
-              structuredClone(history),
-              [...registry.values()].map(({ name, description, parameters }) => ({ name, description, parameters: structuredClone(parameters) })),
-              signal,
-              (delta) => {
-                if (!acceptingDeltas || signal.aborted || typeof delta !== 'string' || !delta) return Promise.resolve();
-                const event: AgentEvent = { type: 'assistant_delta', text: delta, step: steps };
-                // Injected models may ignore the returned promise. Keep observation ordered anyway.
-                deltaDelivery = deltaDelivery.then(() => emit(event));
-                return deltaDelivery;
-              },
-            ));
+            reply = structuredClone(
+              await model.complete(
+                structuredClone(history),
+                [...registry.values()].map(({ name, description, parameters }) => ({
+                  name,
+                  description,
+                  parameters: structuredClone(parameters),
+                })),
+                signal,
+                (delta) => {
+                  if (!acceptingDeltas || signal.aborted || typeof delta !== 'string' || !delta)
+                    return Promise.resolve();
+                  const event: AgentEvent = { type: 'assistant_delta', text: delta, step: steps };
+                  // Injected models may ignore the returned promise. Keep observation ordered anyway.
+                  deltaDelivery = deltaDelivery.then(() => emit(event));
+                  return deltaDelivery;
+                },
+              ),
+            );
           } finally {
             acceptingDeltas = false;
             // Drain accepted callbacks before assistant/done, including failures and cancellation.

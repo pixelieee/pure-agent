@@ -14,15 +14,27 @@ class HeadlessTerminal implements Terminal {
   onInput?: (data: string) => void;
   onResize?: () => void;
   start(onInput: (data: string) => void, onResize: () => void) {
-    this.onInput = onInput; this.onResize = onResize;
+    this.onInput = onInput;
+    this.onResize = onResize;
   }
-  stop() { this.stopped = true; }
+  stop() {
+    this.stopped = true;
+  }
   async drainInput() {}
-  write(text: string) { this.output += text; }
-  send(data: string) { assert.ok(this.onInput); this.onInput(data); }
-  type(text: string) { for (const char of text) this.send(char); }
+  write(text: string) {
+    this.output += text;
+  }
+  send(data: string) {
+    assert.ok(this.onInput);
+    this.onInput(data);
+  }
+  type(text: string) {
+    for (const char of text) this.send(char);
+  }
   resize(columns: number, rows: number) {
-    this.columns = columns; this.rows = rows; this.onResize?.();
+    this.columns = columns;
+    this.rows = rows;
+    this.onResize?.();
   }
   moveBy(_lines: number) {}
   hideCursor() {}
@@ -30,12 +42,16 @@ class HeadlessTerminal implements Terminal {
   clearLine() {}
   clearFromCursor() {}
   clearScreen() {}
-  setTitle(title: string) { this.title = title; }
+  setTitle(title: string) {
+    this.title = title;
+  }
   setProgress(_active: boolean) {}
   setProgramStatus(_status: ProgramStatus) {}
 }
 
-async function settle() { await new Promise<void>((resolve) => setTimeout(resolve, 30)); }
+async function settle() {
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+}
 
 import { PureAgentTUI } from '../src/ui/tui.ts';
 import { SessionController } from '../src/ui/controller.ts';
@@ -85,7 +101,8 @@ test('real editor handles multiline, bracketed paste, graphemes, history and rep
 test('resize keeps bottom editor usable and tool details expand only on demand', async (t) => {
   const { terminal, ui, screen } = setup();
   t.after(() => ui.stop());
-  terminal.type('compact tool result'); terminal.send('\r');
+  terminal.type('compact tool result');
+  terminal.send('\r');
   await settle();
   const collapsed = screen();
   assert.match(collapsed, /format_note/);
@@ -96,7 +113,11 @@ test('resize keeps bottom editor usable and tool details expand only on demand',
   terminal.send('\x0f');
   assert.equal(screen(), collapsed);
   terminal.type('draft survives resize 你好');
-  for (const [columns, rows] of [[48, 18], [120, 40], [32, 12]]) {
+  for (const [columns, rows] of [
+    [48, 18],
+    [120, 40],
+    [32, 12],
+  ]) {
     terminal.resize(columns, rows);
     const lines = screen().split('\n');
     assert.equal(lines.length, rows);
@@ -128,15 +149,23 @@ test('slash completion is contextual and reset explains its destructive effect',
 
 test('Escape cancels in place, preserves typed draft, and Ctrl+C exits only when idle', async (t) => {
   let signal: AbortSignal | undefined;
-  const { terminal, ui, controller, screen } = setup((system) => createAgent({ system, model: {
-    complete: async (_messages, _tools, currentSignal) => {
-      signal = currentSignal;
-      await new Promise<void>((resolve) => currentSignal.addEventListener('abort', () => resolve(), { once: true }));
-      return { role: 'assistant', content: 'interrupted' };
-    },
-  } }));
+  const { terminal, ui, controller, screen } = setup((system) =>
+    createAgent({
+      system,
+      model: {
+        complete: async (_messages, _tools, currentSignal) => {
+          signal = currentSignal;
+          await new Promise<void>((resolve) =>
+            currentSignal.addEventListener('abort', () => resolve(), { once: true }),
+          );
+          return { role: 'assistant', content: 'interrupted' };
+        },
+      },
+    }),
+  );
   t.after(() => ui.stop());
-  terminal.type('slow request'); terminal.send('\r');
+  terminal.type('slow request');
+  terminal.send('\r');
   await settle();
   assert.equal(controller.busy, true);
   terminal.type('keep this draft');
@@ -157,14 +186,20 @@ test('Escape cancels in place, preserves typed draft, and Ctrl+C exits only when
 });
 
 test('Ctrl+C cancels an active run without closing the session', async (t) => {
-  const { terminal, ui, controller } = setup((system) => createAgent({ system, model: {
-    complete: async (_messages, _tools, signal) => {
-      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
-      return { role: 'assistant', content: '' };
-    },
-  } }));
+  const { terminal, ui, controller } = setup((system) =>
+    createAgent({
+      system,
+      model: {
+        complete: async (_messages, _tools, signal) => {
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+          return { role: 'assistant', content: '' };
+        },
+      },
+    }),
+  );
   t.after(() => ui.stop());
-  terminal.type('run'); terminal.send('\r');
+  terminal.type('run');
+  terminal.send('\r');
   await settle();
   terminal.send('\x03');
   await settle();
@@ -181,6 +216,7 @@ test('untrusted terminal escapes are sanitized before Markdown and tool renderin
   ui.event({ type: 'tool_end', id: 'safe-tool', name: 'read', result: '{"value":"safe"}' });
   terminal.send('\x0f');
   assert.match(screen(), /safe/);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Assert injected terminal control sequences never reach output.
   assert.doesNotMatch(terminal.output, /INJECTED-TITLE|\x1b\]0;BAD|\u202e/);
 });
 
@@ -189,7 +225,11 @@ test('long multiline drafts keep their last editing line visible after resize', 
   t.after(() => ui.stop());
   const draft = Array.from({ length: 24 }, (_, index) => `draft line ${index}`).join('\n');
   terminal.type(draft);
-  for (const [columns, rows] of [[100, 40], [48, 18], [100, 50]]) {
+  for (const [columns, rows] of [
+    [100, 40],
+    [48, 18],
+    [100, 50],
+  ]) {
     terminal.resize(columns, rows);
     assert.match(screen(), /draft line 23/);
     assert.equal(ui.editor.getExpandedText(), draft);
@@ -200,10 +240,12 @@ test('new and create reset the visible transcript together with model history', 
   const { terminal, ui, screen } = setup();
   t.after(() => ui.stop());
   for (const command of ['/new', '/create replacement instructions']) {
-    terminal.type('old transcript marker'); terminal.send('\r');
+    terminal.type('old transcript marker');
+    terminal.send('\r');
     await settle();
     assert.match(screen(), /old transcript marker/);
-    terminal.type(command); terminal.send('\r');
+    terminal.type(command);
+    terminal.send('\r');
     await settle();
     assert.doesNotMatch(screen(), /old transcript marker|format_note/);
     assert.match(screen(), /history cleared/i);
@@ -215,7 +257,12 @@ test('collapsed tool errors remain visible without opening JSON details', (t) =>
   const { ui, screen } = setup();
   t.after(() => ui.stop());
   ui.event({ type: 'tool_start', id: 'failed', name: 'read_file', args: { path: 'missing.txt' } });
-  ui.event({ type: 'tool_end', id: 'failed', name: 'read_file', result: JSON.stringify({ ok: false, error: 'File not found' }) });
+  ui.event({
+    type: 'tool_end',
+    id: 'failed',
+    name: 'read_file',
+    result: JSON.stringify({ ok: false, error: 'File not found' }),
+  });
   assert.match(screen(), /! read_file.*File not found/);
   assert.doesNotMatch(screen(), /Arguments:|Result:/);
 });
@@ -237,9 +284,16 @@ test('expanded file evidence is multiline and decoded terminal controls stay ine
   const { terminal, ui, screen } = setup();
   t.after(() => ui.stop());
   ui.event({ type: 'tool_start', id: 'file', name: 'read_project_file', args: { path: 'README.md' } });
-  ui.event({ type: 'tool_end', id: 'file', name: 'read_project_file', result: JSON.stringify({
-    path: 'README.md', content: 'first line\nsecond line\x1b]0;DECODED-ATTACK\x07\x1b[2J\u202e', truncated: true,
-  }) });
+  ui.event({
+    type: 'tool_end',
+    id: 'file',
+    name: 'read_project_file',
+    result: JSON.stringify({
+      path: 'README.md',
+      content: 'first line\nsecond line\x1b]0;DECODED-ATTACK\x07\x1b[2J\u202e',
+      truncated: true,
+    }),
+  });
   terminal.output = '';
   terminal.send('\x0f');
   const frame = screen();
@@ -248,7 +302,6 @@ test('expanded file evidence is multiline and decoded terminal controls stay ine
   assert.doesNotMatch(frame, /\\n|DECODED-ATTACK/);
   assert.doesNotMatch(terminal.output, /DECODED-ATTACK|\u202e/);
 });
-
 
 test('terminal branding is set through the terminal adapter and cleared on exit', () => {
   for (const modeLabel of ['DEMO', 'REPLAY · offline']) {
@@ -273,23 +326,33 @@ test('selected slash command has amber background and deep-ink foreground', asyn
 
 test('streaming updates one Markdown block, preserves drafts, and replaces partial final text', async (t) => {
   let release!: () => void;
-  const gate = new Promise<void>(resolve => { release = resolve; });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let ready!: () => void;
-  const streamed = new Promise<void>(resolve => { ready = resolve; });
-  const { ui, controller, screen } = setup(() => createAgent({ model: {
-    async complete(_messages, _tools, _signal, onTextDelta) {
-      await onTextDelta?.('unique streamed ');
-      await onTextDelta?.('answer');
-      ready(); await gate;
-      return { role: 'assistant', content: 'unique final answer' };
-    },
-  } }));
+  const streamed = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const { ui, controller, screen } = setup(() =>
+    createAgent({
+      model: {
+        async complete(_messages, _tools, _signal, onTextDelta) {
+          await onTextDelta?.('unique streamed ');
+          await onTextDelta?.('answer');
+          ready();
+          await gate;
+          return { role: 'assistant', content: 'unique final answer' };
+        },
+      },
+    }),
+  );
   t.after(() => ui.stop());
   const run = controller.submit('stream this');
   await streamed;
   ui.editor.setText('next draft');
   assert.match(screen(), /unique streamed answer/);
-  release(); await run;
+  release();
+  await run;
   const final = screen();
   assert.equal(final.split('unique final answer').length - 1, 1);
   assert.doesNotMatch(final, /unique streamed answer/);
