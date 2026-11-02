@@ -22,10 +22,40 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
     assert.ok(paths.includes('dist/cli.js'));
     assert.ok(paths.every(path => path === 'package.json' || path === 'README.md' || path.startsWith('dist/') || /^docs\/[^/]+\.(md|svg)$/.test(path)), paths.join('\n'));
     assert.ok(!paths.some(path => /(^|\/)(\.env[^/]*|node_modules|credentials)(\/|$)/i.test(path)));
-    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-    run('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', join(consumer, packed.filename)], consumer);
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    const sourceLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+    assert.equal(sourceLock.lockfileVersion, 3);
+    assert.deepEqual(sourceLock.packages[''].dependencies, manifest.dependencies);
+    const dependencies = { [manifest.name]: `file:${packed.filename}` };
+    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module', dependencies }));
+    // npm ci caches locked tarballs, not the registry packuments needed by an
+    // unlocked install. Reuse the exact runtime graph (including integrity and
+    // nested paths), adding the actual packed artifact as the consumer's root.
+    const runtimePackages = Object.fromEntries(Object.entries(sourceLock.packages)
+      .filter(([path, entry]) => path !== '' && !entry.dev));
+    writeFileSync(join(consumer, 'package-lock.json'), JSON.stringify({
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        '': { dependencies },
+        ...runtimePackages,
+        [`node_modules/${manifest.name}`]: {
+          version: manifest.version,
+          resolved: `file:${packed.filename}`,
+          integrity: packed.integrity,
+          dependencies: manifest.dependencies,
+          bin: manifest.bin,
+          engines: manifest.engines,
+        },
+      },
+    }));
+    run('npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], consumer);
     const installed = JSON.parse(readFileSync(join(consumer, 'node_modules/pure-agent/package.json'), 'utf8'));
     assert.equal(installed.private, true);
+    assert.deepEqual(installed.dependencies, manifest.dependencies);
+    for (const [path, entry] of Object.entries(runtimePackages)) {
+      assert.equal(JSON.parse(readFileSync(join(consumer, path, 'package.json'), 'utf8')).version, entry.version, path);
+    }
     writeFileSync(join(consumer, 'smoke.mjs'), `
       import assert from 'node:assert/strict';
       import { createAgent } from 'pure-agent';
