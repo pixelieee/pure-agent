@@ -25,7 +25,7 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test && npm run build",
     "build": "tsc -p tsconfig.build.json",
-    "test:package": "npm run build && node --test test/package.test.mjs",
+    "test:package": "npm run build && node --test --test-concurrency=1 test/package.test.mjs test/workspace-reader-package.test.mjs",
     "prepack": "npm run build"
   },
   "devDependencies": {
