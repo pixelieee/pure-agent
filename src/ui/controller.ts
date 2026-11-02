@@ -61,6 +61,7 @@ export class SessionController {
       return result;
     } catch (error) {
       this.view.panel('ERROR', error instanceof Error ? error.message : String(error));
+      return;
     } finally { this.abort = undefined; }
   }
 }
