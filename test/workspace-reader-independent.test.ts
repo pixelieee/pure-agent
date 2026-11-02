@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWorkspaceFileTool } from '../src/workspace-file-tool.ts';
 import { createProjectFileTool, PROJECT_FILES } from '../src/project-agent.ts';
-import type { Tool } from '../src/core.ts';
+import type { WorkspaceFileToolOptions } from '../src/workspace-file-tool.ts';
+import type { AgentEvent, Tool } from '../src/core.ts';
 
 const execute = (tool: Tool, args: unknown, signal = new AbortController().signal) => tool.execute(args, { signal });
 async function fixture(t: test.TestContext) {
@@ -25,7 +26,10 @@ test('independent reader: explicit root and nonempty exact allowlist required', 
     { root: tmpdir(), allowedFiles: [] },
     { root: tmpdir(), allowedFiles: ['*'] },
   ]) {
-    assert.throws(() => createWorkspaceFileTool(options as any), /WORKSPACE_FILE_INVALID_OPTIONS/);
+    assert.throws(
+      () => createWorkspaceFileTool(options as unknown as WorkspaceFileToolOptions),
+      /WORKSPACE_FILE_INVALID_OPTIONS/,
+    );
   }
 });
 
@@ -91,7 +95,7 @@ test('independent reader: host list and exposed schema mutations do not elevate 
   allowedFiles.push('extra.txt');
   options.root = '/';
   options.maxBytes = 999;
-  (tool.parameters.properties as any).path.enum.push('extra.txt');
+  (tool.parameters.properties as { path: { enum: string[] } }).path.enum.push('extra.txt');
   await assert.rejects(execute(tool, { path: 'extra.txt' }), /NOT_ALLOWED/);
   assert.deepEqual(await execute(tool, { path: 'docs/public.txt' }), {
     path: 'docs/public.txt',
@@ -164,7 +168,7 @@ test('independent reader: UTF-8 caps omit incomplete code points and preserve BO
   for (let maxBytes = 1; maxBytes <= bytes.length + 1; maxBytes++) {
     const result = (await execute(createWorkspaceFileTool({ root, allowedFiles: ['utf8.txt'], maxBytes }), {
       path: 'utf8.txt',
-    })) as any;
+    })) as { content: string; truncated: boolean };
     let expected = '';
     for (const char of text) {
       if (Buffer.byteLength(expected + char) > maxBytes) break;
@@ -219,7 +223,10 @@ test('independent reader: pre-abort and in-flight abort preserve cancellation re
     if (!preAbort) controller.abort(reason);
     await assert.rejects(result, (error) => error === reason);
   }
-  assert.equal(((await execute(tool, { path: 'docs/public.txt' })) as any).content, 'fixture public text');
+  assert.equal(
+    ((await execute(tool, { path: 'docs/public.txt' })) as { content: string }).content,
+    'fixture public text',
+  );
 });
 
 test('independent reader: existing CLI project tool remains four-file constrained', async (t) => {
@@ -227,14 +234,14 @@ test('independent reader: existing CLI project tool remains four-file constraine
   assert.equal(PROJECT_FILES.length, 4);
   const tool = createProjectFileTool(root);
   assert.equal(tool.name, 'read_project_file');
-  assert.deepEqual((tool.parameters.properties as any).path.enum, [...PROJECT_FILES]);
+  assert.deepEqual((tool.parameters.properties as { path: { enum: string[] } }).path.enum, [...PROJECT_FILES]);
   await assert.rejects(execute(tool, { path: 'docs/public.txt' }), /PROJECT_FILE_NOT_ALLOWED/);
 });
 
 test('independent reader IT: actual agent loop reads granted file and rejects model scope elevation', async (t) => {
   const { createAgent } = await import('../src/index.ts');
   const { root } = await fixture(t);
-  const seen: any[] = [];
+  const seen: AgentEvent[] = [];
   let calls = 0;
   // Only model output is mocked; core, schema checks, tool and filesystem are real.
   const agent = createAgent({
@@ -271,7 +278,12 @@ test('independent reader IT: actual agent loop reads granted file and rejects mo
               },
             ],
           };
-        const results = messages.filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content!));
+        const results = messages
+          .filter((m) => m.role === 'tool')
+          .map((m) => {
+            assert.ok(m.content !== null);
+            return JSON.parse(m.content);
+          });
         assert.deepEqual(results[0], { path: 'docs/public.txt', content: 'fixture public text', truncated: false });
         assert.equal(results[1].ok, false);
         assert.equal(results[2].ok, false);

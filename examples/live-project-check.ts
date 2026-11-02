@@ -42,7 +42,7 @@ try {
     view.panel('STATUS', `ROUND ${i + 1} / 3`);
     const result = await controller.submit(prompts[i]);
     results.push({ prompt: prompts[i], result });
-    if (!result || result.status !== 'completed') {
+    if (result?.status !== 'completed') {
       process.exitCode = 1;
       break;
     }

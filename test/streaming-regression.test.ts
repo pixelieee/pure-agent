@@ -68,8 +68,13 @@ function transport(
             for (const event of events) yield event;
             if (hooks.streamError) throw hooks.streamError;
             if (
-              !events.some((event) =>
-                ['response.completed', 'response.incomplete', 'response.failed'].includes((event as any)?.type),
+              !events.some(
+                (event) =>
+                  !!event &&
+                  typeof event === 'object' &&
+                  'type' in event &&
+                  typeof event.type === 'string' &&
+                  ['response.completed', 'response.incomplete', 'response.failed'].includes(event.type),
               )
             ) {
               yield { type: `response.${result.status}`, response: result };
@@ -265,7 +270,7 @@ test('stream finalization errors are sanitized and never promote draft into hist
 });
 
 test('encrypted final output is replayed only inside its own session, never from delta text', async () => {
-  const seen: any[] = [];
+  const seen: { input: unknown }[] = [];
   let request = 0;
   const client = {
     responses: {
@@ -273,6 +278,7 @@ test('encrypted final output is replayed only inside its own session, never from
         throw new Error('unexpected nonstream');
       },
       stream: (body: unknown) => {
+        assert.ok(body && typeof body === 'object' && 'input' in body);
         seen.push(structuredClone(body));
         const result = request++ === 0 ? response([reasoning, call('a')]) : response([message('done')]);
         return {
@@ -516,7 +522,8 @@ test('official SDK stream helper consumes offline SSE and retains terminal encry
   assert.deepEqual(seen, ['hello']);
   assert.equal(result.content, 'hello');
   assert.equal(costs.length, 1);
-  assert.deepEqual((result.providerData?.data as { output: unknown[] }).output[0], reasoning);
+  assert.ok(result.providerData);
+  assert.deepEqual((result.providerData.data as { output: unknown[] }).output[0], reasoning);
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
@@ -588,7 +595,8 @@ test('late model callbacks cannot write into a finished run or a later session t
   const agent = createAgent({
     model: {
       complete: async (_messages, _tools, _signal, callback) => {
-        callbacks.push(callback!);
+        assert.ok(callback);
+        callbacks.push(callback);
         return { role: 'assistant', content: 'final' };
       },
     },

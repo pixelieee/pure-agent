@@ -13,6 +13,7 @@ export interface WorkspaceFileToolOptions {
 }
 
 function publicPath(path: unknown): path is string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Deny control bytes in host-granted public paths.
   if (typeof path !== 'string' || !path || /[\\:*?\x00-\x1f\x7f]/u.test(path)) return false;
   return path
     .split('/')

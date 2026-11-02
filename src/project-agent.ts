@@ -31,7 +31,7 @@ export function createProjectFileTool(projectRoot = process.cwd()): Tool {
       typeof args === 'object' &&
       !Array.isArray(args) &&
       Object.keys(args).length === 1 &&
-      PROJECT_FILES.includes((args as { path: any }).path),
+      (PROJECT_FILES as readonly unknown[]).includes((args as { path?: unknown }).path),
     async execute(args: { path: string }, { signal }) {
       signal.throwIfAborted();
       if (

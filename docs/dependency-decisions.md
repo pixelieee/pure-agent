@@ -35,3 +35,11 @@
 - MCP：优先官方 TypeScript SDK，保留命名空间、Schema 校验和权限边界，不自己写 OAuth。
 
 来源：[Ajv](https://github.com/ajv-validator/ajv)、[Ajv options](https://ajv.js.org/options.html)、[string-width](https://github.com/sindresorhus/string-width)、[wrap-ansi](https://github.com/chalk/wrap-ansi)、[MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)。
+
+## Biome：单一只读格式与 lint 门禁
+
+开发依赖 `@biomejs/biome` 精确固定为 `2.6.4`，锁文件包含各平台官方二进制。复用成熟工具统一格式与推荐 lint，不再另引入 ESLint/Prettier 或自研规则框架。`npm run quality` 执行 `biome ci --error-on-warnings .`，由 `npm run check` 在类型检查前调用；CI 不修复或改写源文件。导入组织与 assist 暂时关闭，避免无关语义调整。
+
+范围覆盖源码、测试（包括 MJS 安装包测试）、示例与根配置，排除锁文件、生成物及私人文件。仅对异构工具回调的类型边界和刻意匹配控制字符的安全正则使用说明理由的行级豁免；不整文件关闭测试规则。格式检查不是类型检查或独立验收的替代品。
+
+[官方语言支持文档](https://biomejs.dev/introduction/language-support/)当前列出 TypeScript 5.9；本仓库使用 TypeScript 7.0.2 的现有源码已实际通过 Biome 解析检查，但不据此宣称支持所有 TS7 新语法。升级工具或语言语法时需重新验证解析、规则及平台兼容性。

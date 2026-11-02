@@ -143,6 +143,7 @@ test('CLI requires explicit demo and supports one-shot prompt', () => {
   const demo = run('--demo', '--prompt', 'hello');
   assert.equal(demo.status, 0);
   assert.match(demo.stdout, /format_note/);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Verify non-TTY output contains no ESC control bytes.
   assert.doesNotMatch(demo.stdout, /\x1b/);
 });
 

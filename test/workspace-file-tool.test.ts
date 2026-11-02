@@ -21,7 +21,7 @@ test('workspace reader is explicit, immutable and bounded through SDK compositio
   const allowedFiles = ['src/main.ts'];
   const tool = createWorkspaceFileTool({ root, allowedFiles });
   allowedFiles.push('other.txt');
-  (tool.parameters.properties as any).path.enum.push('other.txt');
+  (tool.parameters.properties as { path: { enum: string[] } }).path.enum.push('other.txt');
   assert.equal(tool.validate?.({ path: 'other.txt' }), false);
   const model: Model = {
     complete: async (messages) =>
@@ -37,7 +37,10 @@ test('workspace reader is explicit, immutable and bounded through SDK compositio
   };
   const agent = createAgent({ model, tools: [tool] });
   assert.equal((await agent.run('read')).status, 'completed');
-  assert.deepEqual(JSON.parse(agent.messages.find((m) => m.role === 'tool')!.content!), {
+  const message = agent.messages.find((m) => m.role === 'tool');
+  assert.ok(message);
+  assert.ok(message.content !== null);
+  assert.deepEqual(JSON.parse(message.content), {
     path: 'src/main.ts',
     content: 'export const hello = "世界";',
     truncated: false,

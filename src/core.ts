@@ -22,6 +22,7 @@ export interface ToolDefinition {
 export interface Tool extends ToolDefinition {
   /** Optional domain check, applied after mandatory JSON Schema validation. */
   validate?: (args: unknown) => boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: Agent invokes heterogeneous callbacks after JSON Schema and optional domain validation; direct callers own validation.
   execute: (args: any, ctx: { signal: AbortSignal }) => Promise<unknown>;
 }
 export interface Model {

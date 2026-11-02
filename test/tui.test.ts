@@ -216,6 +216,7 @@ test('untrusted terminal escapes are sanitized before Markdown and tool renderin
   ui.event({ type: 'tool_end', id: 'safe-tool', name: 'read', result: '{"value":"safe"}' });
   terminal.send('\x0f');
   assert.match(screen(), /safe/);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: Assert injected terminal control sequences never reach output.
   assert.doesNotMatch(terminal.output, /INJECTED-TITLE|\x1b\]0;BAD|\u202e/);
 });
 

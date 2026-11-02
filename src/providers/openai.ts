@@ -87,7 +87,15 @@ function decodeOutput(output: unknown): { content: string | null; calls: ToolCal
         if (
           !nonempty(item.id) ||
           !Array.isArray(item.summary) ||
-          item.summary.some((part: any) => part?.type !== 'summary_text' || typeof part.text !== 'string') ||
+          item.summary.some(
+            (part: unknown) =>
+              !part ||
+              typeof part !== 'object' ||
+              !('type' in part) ||
+              part.type !== 'summary_text' ||
+              !('text' in part) ||
+              typeof part.text !== 'string',
+          ) ||
           (item.encrypted_content != null && typeof item.encrypted_content !== 'string')
         )
           throw fail('INVALID_RESPONSE');

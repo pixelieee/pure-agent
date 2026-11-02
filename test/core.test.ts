@@ -11,8 +11,9 @@ const reply = (...calls: ToolCall[]): Message => ({ role: 'assistant', content: 
 const final: Message = { role: 'assistant', content: 'Done' };
 const scripted = (...replies: Message[]): Model => ({
   complete: async () => {
-    if (!replies.length) throw new Error('No scripted response');
-    return replies.shift()!;
+    const response = replies.shift();
+    if (!response) throw new Error('No scripted response');
+    return response;
   },
 });
 const echo: Tool = {
@@ -96,7 +97,10 @@ for (const [name, toolCall, tool] of [
   test(`${name} becomes a model-visible result`, async () => {
     const agent = createAgent({ model: scripted(reply(toolCall), final), tools: [tool] });
     assert.equal((await agent.run('Go')).status, 'completed');
-    const result = JSON.parse(agent.messages.find((m) => m.role === 'tool')!.content!);
+    const message = agent.messages.find((m) => m.role === 'tool');
+    assert.ok(message);
+    assert.ok(message.content !== null);
+    const result = JSON.parse(message.content);
     assert.equal(result.ok, false);
     assert.equal(typeof result.error, 'string');
   });
@@ -175,7 +179,10 @@ test('cancellation after first tool records all call results, skipping remaining
     agent.messages.slice(-2).map((m) => m.tool_call_id),
     ['a', 'b'],
   );
-  assert.match(agent.messages.at(-1)!.content!, /Cancelled/);
+  const last = agent.messages.at(-1);
+  assert.ok(last);
+  assert.ok(last.content !== null);
+  assert.match(last.content, /Cancelled/);
 });
 
 test('cooperative tool abort is recorded and future runs are valid', async () => {
@@ -364,7 +371,10 @@ test('unprintable thrown values cannot break tool result protocol', async () => 
       ],
     });
     assert.equal((await agent.run('Go')).status, 'completed');
-    assert.equal(JSON.parse(agent.messages.find((m) => m.role === 'tool')!.content!).error, 'Unknown error');
+    const message = agent.messages.find((m) => m.role === 'tool');
+    assert.ok(message);
+    assert.ok(message.content !== null);
+    assert.equal(JSON.parse(message.content).error, 'Unknown error');
   }
 });
 
@@ -394,7 +404,10 @@ test('failed validation never invokes the tool or emits tool_start', async () =>
   );
   assert.equal(writes, 0);
   assert.equal(events.includes('tool_start'), false);
-  assert.match(agent.messages.find((message) => message.role === 'tool')!.content!, /Invalid arguments/);
+  const message = agent.messages.find((message) => message.role === 'tool');
+  assert.ok(message);
+  assert.ok(message.content !== null);
+  assert.match(message.content, /Invalid arguments/);
 });
 
 test('only explicit true validates, not truthy accidental validator returns', async () => {
@@ -448,7 +461,8 @@ for (const outcome of ['completed', 'blocked', 'cancelled'] as const) {
     const agent = createAgent({
       model: {
         async complete(_messages, _tools, _signal, onTextDelta) {
-          callback = onTextDelta!;
+          assert.ok(onTextDelta);
+          callback = onTextDelta;
           void callback('first');
           void callback('second');
           if (outcome === 'blocked') throw new Error('model failed');

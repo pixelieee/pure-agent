@@ -113,7 +113,10 @@ test('schema enforcement cannot be bypassed by an absent or approving domain val
     );
     assert.equal(writes, 0);
     assert.equal(events.includes('tool_start'), false);
-    assert.match(agent.messages.find((message) => message.role === 'tool')!.content!, /Invalid tool arguments/);
+    const message = agent.messages.find((message) => message.role === 'tool');
+    assert.ok(message);
+    assert.ok(message.content !== null);
+    assert.match(message.content, /Invalid tool arguments/);
   }
 });
 
@@ -147,5 +150,8 @@ test('domain validator cannot mutate schema-validated execution arguments', asyn
     },
   });
   assert.equal((await agent.run('Go')).status, 'completed');
-  assert.equal(JSON.parse(agent.messages.find((message) => message.role === 'tool')!.content!).profile.age, 30);
+  const message = agent.messages.find((message) => message.role === 'tool');
+  assert.ok(message);
+  assert.ok(message.content !== null);
+  assert.equal(JSON.parse(message.content).profile.age, 30);
 });

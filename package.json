@@ -23,10 +23,11 @@
     "demo": "node src/cli.ts --demo",
     "example": "node examples/basic.ts",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm test && npm run build",
+    "check": "npm run quality && npm run typecheck && npm test && npm run build",
     "build": "tsc -p tsconfig.build.json",
     "test:package": "npm run build && node --test --test-concurrency=1 test/package.test.mjs test/workspace-reader-package.test.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "quality": "biome ci --error-on-warnings ."
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",

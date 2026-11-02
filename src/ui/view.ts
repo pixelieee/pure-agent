@@ -10,6 +10,7 @@ export interface Output {
 export function safeText(value: unknown): string {
   const text = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value));
   return stripVTControlCharacters(text).replace(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: Strip terminal control characters from untrusted display text.
     /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu,
     '',
   );

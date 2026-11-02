@@ -19,8 +19,12 @@ const sum: Tool = {
 };
 const model: Model = {
   async complete(messages) {
-    const last = messages.at(-1)!;
-    if (last.role === 'tool') return { role: 'assistant', content: `The result is ${JSON.parse(last.content!).sum}.` };
+    const last = messages.at(-1);
+    if (!last) throw new Error('Expected a conversation message');
+    if (last.role === 'tool') {
+      if (last.content === null) throw new Error('Expected tool result content');
+      return { role: 'assistant', content: `The result is ${JSON.parse(last.content).sum}.` };
+    }
     return {
       role: 'assistant',
       content: null,

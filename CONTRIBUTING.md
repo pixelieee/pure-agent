@@ -19,9 +19,11 @@ npm run check
 npm run test:package
 ```
 
-第一步使用 `package-lock.json` 安装依赖并填充 npm 缓存，需要依赖源访问权限。`check` 执行严格类型检查、离线测试和构建；`test:package` 在临时目录离线安装 tarball，验证 SDK 导入、类型声明和演示 CLI。缓存缺失时先重新执行依赖安装，不要把安装包测试改成实时模型调用。
+第一步使用 `package-lock.json` 安装依赖并填充 npm 缓存，需要依赖源访问权限。`check` 先执行只读 Biome 格式与 lint 检查（`npm run quality`，警告也失败），再执行严格类型检查、离线测试和构建；`test:package` 在临时目录离线安装 tarball，验证 SDK 导入、类型声明和演示 CLI。缓存缺失时先重新执行依赖安装，不要把安装包测试改成实时模型调用。
 
 CI 的“离线”指模型测试不访问真实模型服务，并非整个工作流断网：检出、Node 安装和依赖下载仍需要网络。CI 在 Ubuntu 与 Windows（Node.js 24）运行完整检查与安装包验收，包测试通过平台 CLI shim 启动。Windows 符号链接测试需要开发者模式或创建符号链接权限；权限不足应明确失败，不得跳过安全断言。已验证范围见 [README](README.md)。
+
+质量门禁使用锁定的 Biome 版本，覆盖 `src/`、`test/`、`examples/` 中的 TypeScript/MJS 与根目录配置；不扫描锁文件、生成物或私人文件。CI 不自动改写代码；本地格式修复可显式运行 `npx biome format --write .` 后审阅 diff。禁止用跳过检查、放宽目录范围或整文件 lint 禁用来制造通过。
 
 ## CI 汇总门禁与独立验收
 

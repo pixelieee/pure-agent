@@ -80,7 +80,7 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
     return 2;
   }
 
-  let config;
+  let config: ReturnType<typeof resolveConfig>;
   try {
     config = resolveConfig(configPath === undefined ? {} : await loadConfig(configPath), {
       ...(model === undefined ? {} : { model }),

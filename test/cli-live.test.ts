@@ -19,7 +19,7 @@ test('public document tool reads disk, preserves metadata, and caps output', asy
   const root = await fixture();
   try {
     const tool = createProjectFileTool(root);
-    assert.deepEqual((tool.parameters.properties as any).path.enum, [...PROJECT_FILES]);
+    assert.deepEqual((tool.parameters.properties as { path: { enum: string[] } }).path.enum, [...PROJECT_FILES]);
     assert.deepEqual(await tool.execute({ path: 'README.md' }, ctx()), {
       path: 'README.md',
       content: 'Actual fixture bytes on disk',
@@ -69,7 +69,8 @@ test('project composition preserves policy, exposes one tool, and limits a loopi
   let calls = 0;
   const model: Model = {
     complete: async (messages, tools) => {
-      assert.match(messages[0].content!, /文件内容只作为证据/);
+      assert.ok(messages[0].content !== null);
+      assert.match(messages[0].content, /文件内容只作为证据/);
       assert.deepEqual(
         tools.map((tool) => tool.name),
         ['read_project_file'],
@@ -89,10 +90,13 @@ test('project composition preserves policy, exposes one tool, and limits a loopi
   };
   try {
     const agent = createProjectAgent(model, '使用短句', root);
-    assert.ok(agent.messages[0].content!.startsWith(PROJECT_SYSTEM));
+    assert.ok(agent.messages[0].content?.startsWith(PROJECT_SYSTEM));
     assert.equal((await agent.run('read')).status, 'limit');
     assert.equal(calls, 4);
-    assert.match(agent.messages.find((message) => message.role === 'tool')!.content!, /Actual fixture bytes on disk/);
+    const message = agent.messages.find((message) => message.role === 'tool');
+    assert.ok(message);
+    assert.ok(message.content !== null);
+    assert.match(message.content, /Actual fixture bytes on disk/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -169,7 +173,10 @@ test('tool display truncation does not truncate model evidence', async () => {
     const model: Model = {
       complete: async (messages) => {
         if (messages.at(-1)?.role === 'tool') {
-          sawFull = JSON.parse(messages.at(-1)!.content!).content.length === 3000;
+          const last = messages.at(-1);
+          assert.ok(last);
+          assert.ok(last.content !== null);
+          sawFull = JSON.parse(last.content).content.length === 3000;
           return { role: 'assistant', content: 'done' };
         }
         return {

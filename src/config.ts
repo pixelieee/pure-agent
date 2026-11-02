@@ -53,7 +53,7 @@ function checked(value: unknown): Readonly<Partial<AgentConfig>> {
   }
   if (!validate(value)) {
     const error = validate.errors?.[0];
-    const location = fields.some((field) => error?.instancePath === `/${field}`) ? error!.instancePath : '/';
+    const location = error && fields.some((field) => error.instancePath === `/${field}`) ? error.instancePath : '/';
     throw new ConfigError('CONFIG_SCHEMA', location);
   }
   return Object.freeze({ ...(value as Partial<AgentConfig>) });

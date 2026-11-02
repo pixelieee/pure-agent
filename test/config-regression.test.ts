@@ -173,12 +173,17 @@ test('CLI uses defaults < explicit JSON < flags regardless of flag ordering, and
               complete: async (messages, tools) => {
                 assert.equal(messages.at(-1)?.content, 'Unicode 输入 🌏');
                 assert.ok(messages[0].content?.startsWith(PROJECT_SYSTEM));
-                if (configured) assert.match(messages[0].content!, /只读中文 🧪/);
+                if (configured) {
+                  assert.ok(messages[0].content !== null);
+                  assert.match(messages[0].content, /只读中文 🧪/);
+                }
                 assert.deepEqual(
                   tools.map((tool) => tool.name),
                   ['read_project_file'],
                 );
-                assert.deepEqual((tools[0].parameters.properties as any).path.enum, [...PROJECT_FILES]);
+                assert.deepEqual((tools[0].parameters.properties as { path: { enum: string[] } }).path.enum, [
+                  ...PROJECT_FILES,
+                ]);
                 return { role: 'assistant', content: 'Offline success.' };
               },
             };
@@ -274,7 +279,9 @@ test('configured loop caps are enforced at both boundaries and /new restores res
           tools.map((tool) => tool.name),
           ['read_project_file'],
         );
-        assert.deepEqual((tools[0].parameters.properties as any).path.enum, [...PROJECT_FILES]);
+        assert.deepEqual((tools[0].parameters.properties as { path: { enum: string[] } }).path.enum, [
+          ...PROJECT_FILES,
+        ]);
         return { role: 'assistant', content: 'done' };
       },
     };
