@@ -18,7 +18,7 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "test": "node --test test/*.test.ts test/quality.test.mjs",
     "start": "node src/cli.ts",
     "demo": "node src/cli.ts --demo",
     "example": "node examples/basic.ts",
