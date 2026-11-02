@@ -1,0 +1,73 @@
+import type { AgentEvent, RunResult } from '../core.ts';
+import { stripVTControlCharacters } from 'node:util';
+import stringWidth from 'string-width';
+
+export interface Output { write(text: string): unknown; isTTY?: boolean; columns?: number }
+export function safeText(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+  return stripVTControlCharacters(text).replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/gu, '');
+}
+
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+/**
+ * Preserve original code points for copying developer-facing output. wrap-ansi
+ * normalizes NFD to NFC, so layout uses native segmentation and string-width
+ * instead; neither Unicode segmentation nor cell-width rules are hand-written.
+ */
+export function wrapText(text: string, width: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of safeText(text).split('\n')) {
+    let line = ''; let used = 0;
+    for (const { segment } of segmenter.segment(paragraph)) {
+      const size = stringWidth(segment);
+      if (line && used + size > width) { lines.push(line); line = ''; used = 0; }
+      line += segment;
+      used += size;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+export type PanelKind = 'USER' | 'AGENT' | 'TOOL' | 'STATUS' | 'ERROR';
+export interface SessionView {
+  panel(kind: PanelKind, content: unknown): void;
+  event(event: AgentEvent, modeLabel?: string): void;
+  finish(result: RunResult): void;
+  reset?(): void;
+}
+
+/** Append-only rendering avoids cursor races, hidden history, and redraw flicker. */
+export class TerminalView implements SessionView {
+  private output: Output;
+  private color: boolean;
+  constructor(output: Output, color = !!output.isTTY && process.env.TERM !== 'dumb' && !('NO_COLOR' in process.env)) {
+    this.output = output; this.color = color;
+  }
+  panel(kind: 'USER' | 'AGENT' | 'TOOL' | 'STATUS' | 'ERROR', content: unknown) {
+    const width = Math.max(12, Math.min(this.output.columns ?? 80, 96));
+    const text = safeText(content);
+    if (!this.color || width < 40) { this.output.write(`[${kind}] ${text}\n`); return; }
+    const accent = kind === 'ERROR' ? '38;2;190;63;68' : '38;2;226;177;91';
+    const paint = (value: string, tone = accent) => `\x1b[48;2;15;17;25m\x1b[${tone}m${value}\x1b[0m`;
+    this.output.write(paint(`┏━ ${kind} ${'━'.repeat(Math.max(0, width - kind.length - 5))}┓`) + '\n');
+    for (const line of wrapText(text, width - 4)) {
+      const length = stringWidth(line);
+      this.output.write(paint('┃ ') + paint(line + ' '.repeat(Math.max(0, width - 4 - length)), '38;2;237;229;209') + paint(' ┃') + '\n');
+    }
+    this.output.write(paint(`┗${'━'.repeat(width - 2)}┛`) + '\n');
+  }
+  event(event: AgentEvent, modeLabel?: string) {
+    if (event.type === 'model_start') this.panel('STATUS', `${modeLabel ? `${modeLabel} · ` : ''}model step`);
+    if (event.type === 'assistant' && event.text) this.panel('AGENT', event.text);
+    if (event.type === 'tool_start') this.panel('TOOL', `→ ${event.name}\nArguments: ${JSON.stringify(event.args)}`);
+    if (event.type === 'tool_end') this.panel('TOOL', `← ${event.name}\nResult: ${event.result.length > 600 ? `${event.result.slice(0, 600)}\n[... truncated display only]` : event.result}`);
+  }
+  finish(result: RunResult) {
+    this.panel(result.error ? 'ERROR' : 'STATUS', `${result.status} · ${result.steps} model step(s)${result.error ? ` · ${result.error}` : ''}`);
+  }
+  welcome(note = '') {
+    this.panel('STATUS', `PURE AGENT / ISSUE 001\nDARK DECO${note ? `\n${note}` : ''}\n/help for commands · Ctrl+C cancels; when idle, exits.`);
+  }
+}

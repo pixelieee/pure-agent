@@ -1,0 +1,25 @@
+{
+  "verified_at": "2026-11-02T12:09:31.936577+00:00",
+  "model": "gpt-5.6-luna",
+  "reasoning_requested": "low",
+  "rounds_completed": 3,
+  "model_requests": 6,
+  "tool_calls": 4,
+  "usage": {
+    "promptTokens": 14018,
+    "completionTokens": 350,
+    "cachedTokens": 10436,
+    "reasoningTokens": 0
+  },
+  "estimated_test_usd": 0.0013451200000000002,
+  "scope": "Three factual read-only project-document questions, not broad production acceptance",
+  "screenshot_method": "Actual successful trace replayed in the same TerminalView; native GUI network execution remained blocked",
+  "source_snapshot": "docs/live-test-baseline.json was captured before the run; preserved intentionally",
+  "pricing_source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+  "limits": [
+    "No token streaming",
+    "No durable session recovery",
+    "No multi-agent implementation",
+    "No production task-quality evaluation"
+  ]
+}
