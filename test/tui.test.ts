@@ -270,3 +270,60 @@ test('selected slash command has amber background and deep-ink foreground', asyn
   const frame = ui.tui.getScreenLines().join('\n');
   assert.match(frame, /38;2;15;17;25;48;2;226;177;91m/);
 });
+
+test('streaming updates one Markdown block, preserves drafts, and replaces partial final text', async (t) => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let ready!: () => void;
+  const streamed = new Promise<void>(resolve => { ready = resolve; });
+  const { ui, controller, screen } = setup(() => createAgent({ model: {
+    async complete(_messages, _tools, _signal, onTextDelta) {
+      await onTextDelta?.('unique streamed ');
+      await onTextDelta?.('answer');
+      ready(); await gate;
+      return { role: 'assistant', content: 'unique final answer' };
+    },
+  } }));
+  t.after(() => ui.stop());
+  const run = controller.submit('stream this');
+  await streamed;
+  ui.editor.setText('next draft');
+  assert.match(screen(), /unique streamed answer/);
+  release(); await run;
+  const final = screen();
+  assert.equal(final.split('unique final answer').length - 1, 1);
+  assert.doesNotMatch(final, /unique streamed answer/);
+  assert.equal(ui.editor.getText(), 'next draft');
+});
+
+test('interrupted streaming is marked and a later run uses a fresh block', async (t) => {
+  const { ui, screen } = setup();
+  t.after(() => ui.stop());
+  ui.event({ type: 'assistant_delta', step: 1, text: 'partial fragment' });
+  ui.finish({ status: 'cancelled', steps: 1, text: '' });
+  assert.match(screen(), /Interrupted · partial output not saved/);
+  ui.event({ type: 'assistant_delta', step: 1, text: 'fresh answer' });
+  ui.event({ type: 'assistant', step: 1, text: 'fresh answer' });
+  const final = screen();
+  assert.match(final, /partial fragment/);
+  assert.equal(final.split('fresh answer').length - 1, 1);
+  ui.reset();
+  assert.doesNotMatch(screen(), /partial fragment|fresh answer|Interrupted/);
+});
+
+test('stream deltas respect manual scroll and sanitize split terminal controls', (t) => {
+  const { ui, screen } = setup();
+  t.after(() => ui.stop());
+  ui.panel('AGENT', Array.from({ length: 80 }, (_, i) => `older transcript row ${i}`).join('\n'));
+  ui.event({ type: 'assistant_delta', step: 1, text: 'stream tail' });
+  screen();
+  ui.tui.scrollToTop();
+  const before = screen();
+  ui.event({ type: 'assistant_delta', step: 1, text: '\nnew tail\x1b[' });
+  ui.event({ type: 'assistant_delta', step: 1, text: '31mred\x1b[0m' });
+  assert.equal(screen(), before);
+  ui.tui.scrollToBottom();
+  const bottom = screen();
+  assert.match(bottom, /new tailred/);
+  assert.doesNotMatch(bottom, /31mred/);
+});

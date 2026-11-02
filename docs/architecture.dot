@@ -9,12 +9,12 @@ digraph PureAgent {
  }
  subgraph cluster_ui {label="终端交互层（SDK 不依赖此层）";fontsize=18;color="#485566";style=rounded;
  ctrl [label="SessionController\nui/controller.ts\n命令、会话切换、取消"];
- view [label="PureAgentTUI / TerminalView\nui/tui.ts · ui/view.ts\n独立 pi-tui · Dark Deco\n交互式编辑 / 管道文本输出"];
+ view [label="PureAgentTUI / TerminalView\nui/tui.ts · ui/view.ts\n独立 pi-tui · Dark Deco\n交互式编辑 / 流式 Markdown\n管道仅输出完整回复"];
  {rank=same;ctrl;view;}
  }
  subgraph cluster_core {label="执行核心与接口";fontsize=18;color="#b89350";style=rounded;
  core [label="createAgent / run\nsrc/core.ts\n会话状态 · 模型/工具循环\n步数限制 · 事件 · 协作式取消",fillcolor="#2a2a30"];
- model [label="Model 接口\ncomplete(messages, definitions, signal)"];
+ model [label="Model 接口\ncomplete(messages, definitions, signal, onTextDelta?)"];
  schema [label="Schema 校验适配器\nsrc/schema.ts\nAjv · draft-07 · 禁止隐式改参"];
  tool [label="Tool 接口\n描述 · 参数校验 · execute"];
  {rank=same;model;tool;}
@@ -34,6 +34,6 @@ digraph PureAgent {
  core -> schema [label="注册时编译 / 执行前验证"];
  model -> demo [label="注入实现",style=dashed];
  tool -> note [label="注入实现",style=dashed];
- pending [shape=note,label="尚未实现\n持久化、完整权限审批、流式 token 输出\nMulti-Agent / Team、生产级任务评测",style="filled,dashed",color="#79879a",fillcolor="#151b25",fontcolor="#aeb8c8",fontsize=13];
+ pending [shape=note,label="尚未实现\n持久化、完整权限审批\nMulti-Agent / Team、生产级任务评测",style="filled,dashed",color="#79879a",fillcolor="#151b25",fontcolor="#aeb8c8",fontsize=13];
  demo -> pending [style=invis];note -> pending [style=invis];
 }
