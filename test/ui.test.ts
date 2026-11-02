@@ -52,6 +52,32 @@ test('create uses exact instructions and new restores a fresh session', async ()
   await controller.submit('/quit');
   assert.equal(controller.closed, true);
 });
+test('controller commands and ignored inputs resolve without a run result', async () => {
+  const out = capture();
+  const controller = new SessionController(createDemoAgent, out.view);
+  for (const input of ['  ', '/help', '/new', '/create instructions', '/create', '/unknown', '/quit', 'after close']) {
+    assert.equal(await controller.submit(input), undefined);
+    assert.equal(controller.busy, false);
+  }
+  assert.doesNotMatch(out.text(), /\[USER\]/);
+});
+test('controller reports a rejected run, returns undefined, and permits a subsequent run', async () => {
+  const out = capture();
+  let rejectNext = true;
+  const controller = new SessionController((system) => {
+    const agent = createDemoAgent(system);
+    return { ...agent, run: async (...args: Parameters<typeof agent.run>) => {
+      if (rejectNext) { rejectNext = false; throw new Error('run rejected'); }
+      return agent.run(...args);
+    } };
+  }, out.view);
+  assert.equal(await controller.submit('first'), undefined);
+  assert.match(out.text(), /\[ERROR\] run rejected/);
+  assert.equal(controller.busy, false);
+  assert.equal(controller.closed, false);
+  assert.equal((await controller.submit('second'))?.status, 'completed');
+  assert.equal(controller.busy, false);
+});
 test('Ctrl+C cancels active run, leaves session open, then exits when idle', async () => {
   const out = capture();
   let started!: () => void;
