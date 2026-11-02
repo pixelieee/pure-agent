@@ -7,3 +7,6 @@ dist/
 coverage/
 artifacts/
 *.tgz
+
+# Local private notes, credentials and raw inputs; never publish this directory.
+/.private/
