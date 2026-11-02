@@ -1,0 +1,5 @@
+# Keep text checkouts consistent with Biome on every supported platform.
+* text=auto eol=lf
+
+# Diagram renders are binary; never apply text or line-ending conversion.
+*.png binary
