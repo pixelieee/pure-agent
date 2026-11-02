@@ -67,6 +67,7 @@ export class PureAgentTUI implements SessionView {
   private controller?: SessionActions;
   private expanded = false;
   private status = 'ready';
+  private streaming?: { step: number; text: string; block: Markdown };
   private resolveClosed?: () => void;
   private started = false;
   private pulse?: ReturnType<typeof setInterval>;
@@ -144,6 +145,7 @@ export class PureAgentTUI implements SessionView {
     }
   }
   reset() {
+    this.streaming = undefined;
     this.transcript.clear();
     this.tools.clear();
     this.tui.resetTextSelection();
@@ -167,7 +169,23 @@ export class PureAgentTUI implements SessionView {
   }
   event(event: AgentEvent) {
     if (event.type === 'model_start') this.status = `working · model step ${event.step} · Esc to cancel`;
-    if (event.type === 'assistant' && event.text) this.panel('AGENT', event.text);
+    if (event.type === 'assistant_delta' && event.text) {
+      if (!this.streaming || this.streaming.step !== event.step) {
+        const block = new Markdown('', 2, 1, markdownTheme, { color: deco.ivory }, { renderLatex: false });
+        this.transcript.addChild(new Text(deco.amber('  AGENT'), 0, 0));
+        this.transcript.addChild(block);
+        this.streaming = { step: event.step, text: '', block };
+      }
+      this.streaming.text += event.text;
+      // Sanitize the accumulated text: control sequences may span delta boundaries.
+      this.streaming.block.setText(safeText(this.streaming.text));
+    }
+    if (event.type === 'assistant') {
+      if (this.streaming?.step === event.step) {
+        this.streaming.block.setText(safeText(event.text));
+        this.streaming = undefined;
+      } else if (event.text) this.panel('AGENT', event.text);
+    }
     if (event.type === 'tool_start') {
       const tool = new ToolSummary(event.id, safeText(event.name), safeText(JSON.stringify(event.args)), () => this.expanded);
       this.tools.set(event.id, tool);
@@ -186,6 +204,10 @@ export class PureAgentTUI implements SessionView {
     this.tui.requestRender();
   }
   finish(result: RunResult) {
+    if (this.streaming) {
+      this.streaming.block.setText(`${safeText(this.streaming.text)}\n\n[Interrupted · partial output not saved]`);
+      this.streaming = undefined;
+    }
     this.status = `${result.status} · ${result.steps} model step${result.steps === 1 ? '' : 's'}`;
     if (result.error) this.panel('ERROR', result.error);
     this.tui.requestRender();

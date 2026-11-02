@@ -2,25 +2,25 @@
 
 这是工程方向与状态快照，不是交付日期承诺。目标是一个**小而有力、可检查的基本 Agent**：同一核心服务 SDK 与 CLI，Dark Deco TUI 提供可观察交互；先把基本单元做好，再验证组合。
 
-## 本地已验证基线（初始化 PR 待合并）
+## 已合并主干
 
-本地验证提交：`75798b33f1b8444550d188893fab070a632b482c`。公开初始化使用新历史：[草稿 PR #1](https://github.com/pixelieee/pure-agent/pull/1) 的 `22a1592` 与该本地提交文件树相同，但不是同一提交。2026-11-02 发布状态快照中，远程 `main` 仍只有 README 种子提交 `0e94a1f`；以下能力属于待合并的初始化 PR，不是已交付的远程主干能力：
+2026-11-02 状态快照：远程 `main` 为 `1a2e14cb030a77c94be6471d09dfa25fced958c7`，已合并 [初始化 PR #1](https://github.com/pixelieee/pure-agent/pull/1)、[配置 PR #2](https://github.com/pixelieee/pure-agent/pull/2) 和 [流式输出 PR #3](https://github.com/pixelieee/pure-agent/pull/3)。
 
 - 单会话模型 → 工具 → 观察循环，注入模型与工具，顺序执行、步数上限、协作式取消和可观察结果。
 - SDK 与 CLI 共用核心；确定性离线演示、官方 OpenAI Responses 适配器与限定文件的只读项目工具。
-- 独立 Pi TUI 模块承载编辑、Markdown 与终端交互，Dark Deco 视觉层不引入另一套执行核心。
-- JSON Schema 参数校验、SDK / CLI 本地安装包验收与离线 CI 工作流。
+- 显式 JSON 会话配置：内置默认值 < 配置文件 < 显式 CLI 参数；不自动发现配置，不允许凭据或端点覆盖。详见 [配置文档](configuration.md)。
+- 官方 SDK 流式输出与 Pi TUI 增量 Markdown 渲染；管道保留完整回复输出，中断局部文本不写入会话历史。
+- 独立 Pi TUI 模块承载编辑与终端交互，Dark Deco 视觉层不引入另一套执行核心。
+- JSON Schema 参数校验、SDK / CLI 本地安装包验收与离线模型 CI；冷缓存安装包问题已修复。
 
-该本地基线已有记录为严格类型检查、108 项离线测试和独立安装包验收通过；此文档变更未重新运行这些检查。真实模型记录只覆盖三轮限定项目资料交互，不是通用准确率、生产验收或账户花费保证。查看 [README](../README.md) 的验证范围与运行命令。
-
-截至上述发布状态快照，远程 CI 的源码测试与构建通过，但安装包 smoke test 在冷缓存环境报 `ENOTCACHED`，修复正在进行；本地通过记录不能替代远程 CI 结果。后续状态以对应 PR 的最新提交与检查为准。
+组合验收记录为 139 项离线测试与 1 项安装包测试通过；PR #3 的 [CI run 41492518623](https://github.com/pixelieee/pure-agent/actions/runs/41492518623) 成功。本次文档更新未重新运行测试，不能把该历史记录当作后续提交验收。真实模型记录只覆盖三轮限定项目资料交互，不是流式功能的真实模型验收、通用准确率、生产验收或账户花费保证。
 
 ## 开发中：不是主干能力
 
-- [草稿 PR #3：`feat/streaming`](https://github.com/pixelieee/pure-agent/pull/3)：模型输出流式呈现，仍需审阅、验收与合并；基线适配器尚不支持流式显示。
-- [草稿 PR #2：`feat/config`](https://github.com/pixelieee/pure-agent/pull/2)：配置能力改进，仍需审阅、验收与合并；不能据此宣称主干已有该分支行为。
+- [Windows 安装包验收 PR #5](https://github.com/pixelieee/pure-agent/pull/5)：仍待集成，不能宣称当前主干已通过 Windows 验收。
+- 扩展项目读取能力：仍待集成；主干真实模式仍只有四个指定文件的只读工具，不提供任意文件读取、shell 或写入。
 
-分支可能独立演进；测试数量和成功记录必须绑定具体提交。合并前记录的组合验证，不等于主干 CI 已通过。
+分支可能独立演进；测试数量和成功记录必须绑定具体提交。合并前的组合验证不代表主干已有该能力。
 
 ## 后续顺序与完成证据
 

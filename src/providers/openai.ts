@@ -1,13 +1,17 @@
 import OpenAI from 'openai';
 import { toResponseInputItems } from 'openai/lib/responses/ResponseInputItems';
-import type { Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputItem } from 'openai/resources/responses/responses';
+import type { Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputItem, ResponseCreateParamsStreaming, ResponseStreamEvent } from 'openai/resources/responses/responses';
 import type { Message, Model, ToolCall } from '../core.ts';
 
 type ProviderResponse = Pick<Response, 'output' | 'status' | 'usage' | 'error' | 'incomplete_details'>;
 /** Narrow transport seam; the adapter never executes tools. */
 export interface OpenAIClient {
   responses: { create: (body: ResponseCreateParamsNonStreaming,
-    options: { signal: AbortSignal; maxRetries: number; timeout: number }) => Promise<ProviderResponse> };
+    options: { signal: AbortSignal; maxRetries: number; timeout: number }) => Promise<ProviderResponse>;
+    /** Official SDK streaming helper; optional for existing injected transports. */
+    stream?: (body: ResponseCreateParamsStreaming,
+      options: { signal: AbortSignal; maxRetries: number; timeout: number }) => AsyncIterable<ResponseStreamEvent>;
+  };
 }
 export interface OpenAIUsage {
   promptTokens: number; completionTokens: number; totalTokens: number; cachedTokens: number; reasoningTokens: number;
@@ -116,7 +120,7 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
   try { client = options.client ?? new OpenAI({ apiKey: options.apiKey, baseURL: 'https://api.openai.com/v1', maxRetries: 0, timeout: 30_000, logLevel: 'off' }); }
   catch { throw fail('INVALID_CONFIG'); }
   return {
-    async complete(messages, tools, signal) {
+    async complete(messages, tools, signal, onTextDelta) {
       if (signal.aborted) throw fail('ABORTED');
       const body: ResponseCreateParamsNonStreaming = {
         model, input: wireMessages(messages), reasoning: { effort }, max_output_tokens: maxTokens,
@@ -124,9 +128,25 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
         ...(tools.length ? { tools: tools.map(({ name, description, parameters }) => ({ type: 'function' as const,
           name, description, parameters: structuredClone(parameters), strict: false })) } : {}),
       };
-      let response: ProviderResponse;
-      try { response = await client.responses.create(body, { signal, maxRetries: 0, timeout: 30_000 }); }
-      catch (error) { throw requestError(error, signal); }
+      let response: ProviderResponse | undefined;
+      let streamError = false;
+      try {
+        const requestOptions = { signal, maxRetries: 0, timeout: 30_000 };
+        if (onTextDelta && client.responses.stream) {
+          for await (const event of client.responses.stream({ ...body, stream: true }, requestOptions)) {
+            if (signal.aborted) break;
+            if (event.type === 'response.output_text.delta' && nonempty(event.delta)) {
+              try { await onTextDelta(event.delta); } catch { /* Presentation cannot alter execution. */ }
+            } else if (event.type === 'response.completed' || event.type === 'response.incomplete' || event.type === 'response.failed') {
+              response = event.response;
+              break; // Terminal accounting and output are accepted exactly once.
+            } else if (event.type === 'error') {
+              streamError = true;
+              break;
+            }
+          }
+        } else response = await client.responses.create(body, requestOptions);
+      } catch (error) { throw requestError(error, signal); }
       if (onUsage && response?.usage) {
         const usage: OpenAIUsage = {
           promptTokens: response.usage.input_tokens, completionTokens: response.usage.output_tokens,
@@ -138,6 +158,7 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
         }
       }
       if (signal.aborted) throw fail('ABORTED');
+      if (streamError) throw fail('RESPONSE_FAILED');
       if (response?.status === 'incomplete') throw fail(response.incomplete_details?.reason === 'max_output_tokens' ? 'TRUNCATED' : 'INCOMPLETE_RESPONSE');
       if (response?.status === 'failed' || response?.error) throw fail('RESPONSE_FAILED');
       if (response?.status !== 'completed') throw fail('INCOMPLETE_RESPONSE');

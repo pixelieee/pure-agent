@@ -50,13 +50,15 @@ node src/cli.ts --demo --prompt "整理这条演示笔记"
 
 ## Build in public
 
-公开小步实现、取舍与可复现证据，不把计划写成已交付能力。[路线图](docs/roadmap.md) 区分本地已验证基线、待合并 PR 与后续方向；[贡献指南](CONTRIBUTING.md) 说明验收和草稿 PR 流程。
+公开小步实现、取舍与可复现证据，不把计划写成已交付能力。[路线图](docs/roadmap.md) 区分已合并主干、待合并 PR 与后续方向；[贡献指南](CONTRIBUTING.md) 说明验收和草稿 PR 流程。
 
 先验证单 Agent 的任务完成质量，再补必要的工具与可靠性机制；多 Agent 组合放在基本单元成熟之后。公开进展不包含密钥、私人笔记或原始调用轨迹；这类本地材料放在忽略的 `.private/`，凭据优先由宿主注入。Git 忽略规则不是保密或访问控制机制。
 
 ## 当前验证
 
-本地基线 `75798b3` 的严格 TypeScript 类型检查、108 项离线测试，以及独立安装包验收测试通过；公开初始化见待合并的 [草稿 PR #1](https://github.com/pixelieee/pure-agent/pull/1)，并非远程主干已交付。2026-11-02 发布状态快照中，远程 CI 的源码测试与构建通过，但安装包测试因冷缓存 `ENOTCACHED` 失败，修复进行中；最新结果以 PR 检查为准。终端已验证交互输入、窄屏降级、重定向输出、取消后继续运行与退出。已验证三轮限定项目资料的真实调用与 Token 用量；这不是通用任务准确率或生产验收。
+2026-11-02 状态快照：远程主干 `1a2e14cb030a77c94be6471d09dfa25fced958c7` 已合并初始化、显式配置与流式输出（PR #1–#3）。组合验收记录为 139 项离线测试及 1 项安装包测试通过，PR #3 的 [CI run 41492518623](https://github.com/pixelieee/pure-agent/actions/runs/41492518623) 成功；冷缓存安装包问题已修复。本文档更新未重新运行测试，后续状态以对应提交的检查为准。
+
+终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。真实模型记录只覆盖三轮限定项目资料交互与 Token 用量，不代表流式功能的真实模型验收、通用任务准确率或生产验收。
 
 安装开发依赖后执行 `npm run check`。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
 
@@ -87,13 +89,17 @@ npm run test:package
 
 安装本地 tarball 后，SDK 入口为 `pure-agent`，CLI 命令为 `pure-agent --demo`。npm 包仅包含编译后的 JS/类型声明、README、Markdown 文档和 SVG；完整源码 ZIP 另含测试、DOT 和 PNG。
 
+## 显式会话配置
+
+真实模式可通过 `--config ./agent-config.json` 显式选择 JSON 配置；优先级为内置默认值 < 配置文件 < 显式 CLI 参数。配置不能包含密钥、替换端点或新增工具权限。字段、范围与失败行为见 [配置文档](docs/configuration.md)。
+
 ## 真实模型与只读项目工具
 
 ```sh
 node --use-env-proxy --env-file=.env.local src/cli.ts --openai --reasoning low
 ```
 
-密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses API，不自行解析 SSE；尚未实现流式显示。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
+密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses SDK 流式接口，不自行解析 SSE；交互式 TUI 增量更新同一个 Markdown 块，管道输出仍仅显示完整回复。中断的局部文本会标记为未保存，不写入会话历史。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
 
 当前 CLI 的真实模式只提供 `read_project_file`，允许 README、package.json、依赖决策和测试前基线四个指定文件；不提供任意文件读取、shell、写入或网络工具。SDK 可注入其他工具，但宿主必须负责授权和隔离。`/create` 只修改当前 Agent 指令，不动态生成工具。
 

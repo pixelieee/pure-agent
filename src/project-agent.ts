@@ -48,6 +48,6 @@ export function createProjectFileTool(projectRoot = process.cwd()): Tool {
     },
   };
 }
-export function createProjectAgent(model: Model, system = PROJECT_SYSTEM, projectRoot = process.cwd()) {
-  return createAgent({ model, system: system === PROJECT_SYSTEM ? system : `${PROJECT_SYSTEM}\n用户配置：${system}`, tools: [createProjectFileTool(projectRoot)], maxSteps: 4 });
+export function createProjectAgent(model: Model, system = PROJECT_SYSTEM, projectRoot = process.cwd(), options: { maxSteps?: number } = {}) {
+  return createAgent({ model, system: system === PROJECT_SYSTEM ? system : `${PROJECT_SYSTEM}\n用户配置：${system}`, tools: [createProjectFileTool(projectRoot)], maxSteps: options.maxSteps ?? 4 });
 }
