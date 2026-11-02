@@ -1,0 +1,39 @@
+digraph PureAgent {
+ graph [rankdir=TB, bgcolor="#10141e", pad="0.5", nodesep="0.4", ranksep="0.65", fontname="Noto Sans CJK SC", fontsize=24, fontcolor="#f1e7d3", labelloc=t, label="PURE AGENT · 当前实现\nTypeScript / Node.js 24.2+ · 单 Agent 原型", splines=polyline];
+ node [shape=box, style="rounded,filled", color="#b89350", fillcolor="#1b2330", fontcolor="#f1e7d3", fontname="Noto Sans CJK SC", fontsize=16, margin="0.22,0.16", penwidth=1.5];
+ edge [color="#c6a262", fontcolor="#d5c7aa", fontname="Noto Sans CJK SC", fontsize=12, arrowsize=0.7];
+ subgraph cluster_entry {label="入口与装配"; fontsize=18; color="#485566"; style=rounded;
+ sdk [label="SDK 入口\nsrc/index.ts\n调用方注入模型与工具"];
+ cli [label="CLI 装配入口\nsrc/cli.ts\n解析参数、装配模型 / 工具 / 终端"];
+ {rank=same; sdk;cli;}
+ }
+ subgraph cluster_ui {label="终端交互层（SDK 不依赖此层）";fontsize=18;color="#485566";style=rounded;
+ ctrl [label="SessionController\nui/controller.ts\n命令、会话切换、取消"];
+ view [label="PureAgentTUI / TerminalView\nui/tui.ts · ui/view.ts\n独立 pi-tui · Dark Deco\n交互式编辑 / 管道文本输出"];
+ {rank=same;ctrl;view;}
+ }
+ subgraph cluster_core {label="执行核心与接口";fontsize=18;color="#b89350";style=rounded;
+ core [label="createAgent / run\nsrc/core.ts\n会话状态 · 模型/工具循环\n步数限制 · 事件 · 协作式取消",fillcolor="#2a2a30"];
+ model [label="Model 接口\ncomplete(messages, definitions, signal)"];
+ schema [label="Schema 校验适配器\nsrc/schema.ts\nAjv · draft-07 · 禁止隐式改参"];
+ tool [label="Tool 接口\n描述 · 参数校验 · execute"];
+ {rank=same;model;tool;}
+ }
+ subgraph cluster_impl {label="当前可注入实现（由入口显式选择）";fontsize=18;color="#485566";style=rounded;
+ demo [label="模型实现\nOpenAI Responses / src/providers/openai.ts\nDemo / src/demo.ts（显式离线）"];
+ note [label="工具实现\nread_project_file（四文件只读）\nformat_note（演示）"];
+ {rank=same;demo;note;}
+ }
+ sdk -> core [label="程序调用"];
+ cli -> ctrl [label="装配"];
+ cli -> view [label="装配"];
+ ctrl -> core [label="run / signal / onEvent"];
+ ctrl -> view [label="呈现事件与状态",constraint=false];
+ core -> model [label="调用"];
+ core -> tool [label="校验后执行"];
+ core -> schema [label="注册时编译 / 执行前验证"];
+ model -> demo [label="注入实现",style=dashed];
+ tool -> note [label="注入实现",style=dashed];
+ pending [shape=note,label="尚未实现\n持久化、完整权限审批、流式 token 输出\nMulti-Agent / Team、生产级任务评测",style="filled,dashed",color="#79879a",fillcolor="#151b25",fontcolor="#aeb8c8",fontsize=13];
+ demo -> pending [style=invis];note -> pending [style=invis];
+}

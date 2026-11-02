@@ -1,0 +1,14 @@
+{
+  "verified_at": "2026-11-02T11:58:45.637376+00:00",
+  "offline_tests_passed": 93,
+  "typecheck": "passed",
+  "build": "passed",
+  "package_smoke_test": "previous build passed; live-provider package not yet rechecked",
+  "real_model_test": "Responses integration ready; three-round acceptance pending",
+  "limits": [
+    "No token streaming",
+    "No durable session recovery",
+    "No multi-agent implementation",
+    "No production task-quality evaluation"
+  ]
+}
