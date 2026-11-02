@@ -55,10 +55,14 @@ export function createWorkspaceFileTool(options: WorkspaceFileToolOptions): Tool
       signal.throwIfAborted();
       if (!valid(args)) throw new Error('WORKSPACE_FILE_NOT_ALLOWED');
       try {
-        const target = join(workspace, ...args.path.split('/'));
+        // Windows may expand a non-symlink 8.3 root alias (e.g. RUNNER~1).
+        // Reject symlinks before canonicalizing; lexical equality is not identity.
+        await checkPath(workspace, signal);
+        if (!(await lstat(workspace)).isDirectory()) throw new Error();
+        const canonicalRoot = await realpath(workspace);
+        const target = join(canonicalRoot, ...args.path.split('/'));
         await checkPath(target, signal);
-        if (!(await lstat(workspace)).isDirectory() || await realpath(workspace) !== workspace
-          || await realpath(target) !== target) throw new Error();
+        if (await realpath(target) !== target) throw new Error();
         const before = await lstat(target);
         if (!before.isFile()) throw new Error();
         signal.throwIfAborted();
@@ -75,7 +79,9 @@ export function createWorkspaceFileTool(options: WorkspaceFileToolOptions): Tool
             if (!bytesRead) break;
             length += bytesRead;
           }
+          await checkPath(workspace, signal);
           await checkPath(target, signal);
+          if (await realpath(workspace) !== canonicalRoot) throw new Error();
           const after = await lstat(target);
           if (after.ino !== opened.ino || after.dev !== opened.dev || await realpath(target) !== target) throw new Error();
           signal.throwIfAborted();

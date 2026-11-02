@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdtemp, mkdir, writeFile, symlink, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createWorkspaceFileTool } from '../src/index.ts';
 import { createAgent, type Model } from '../src/core.ts';
 
@@ -78,4 +79,20 @@ test('direct invocation guards inputs and honors cancellation before any path lo
   }
   const signal = AbortSignal.abort(new Error('fixture cancellation'));
   await assert.rejects(tool.execute({ path: 'src/main.ts' }, { signal }), /fixture cancellation/);
+});
+
+
+test('host temporary root and canonical root both read the same authorized fixture', async t => {
+  const root = await fixture(t);
+  const canonicalRoot = await realpath(root);
+  // On Windows CI tmpdir can contain an 8.3 alias. Report only synthetic paths.
+  if (process.platform === 'win32') t.diagnostic(JSON.stringify({
+    fixtureRoot: resolve(root), canonicalRoot, canonicalSpellingChanged: resolve(root) !== canonicalRoot,
+    openFlags: constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    noFollow: constants.O_NOFOLLOW ?? null, nonBlock: constants.O_NONBLOCK ?? null,
+  }));
+  for (const workspace of [root, canonicalRoot]) {
+    assert.deepEqual(await createWorkspaceFileTool({ root: workspace, allowedFiles: ['src/main.ts'] })
+      .execute({ path: 'src/main.ts' }, ctx()), { path: 'src/main.ts', content: 'export const hello = "世界";', truncated: false });
+  }
 });
