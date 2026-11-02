@@ -47,3 +47,24 @@ jobs:
         run: npm run check
       - name: Verify installed SDK and demo CLI from tarball
         run: npm run test:package
+
+  acceptance-gate:
+    # Stable check name for optional repository protection; not a review approval.
+    name: Offline acceptance gate
+    needs: [acceptance]
+    # Without always(), a failed/skipped prerequisite skips this check too.
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require successful acceptance matrix
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ACCEPTANCE_RESULT: ${{ needs.acceptance.result }}
+        run: |
+          if [[ "$ACCEPTANCE_RESULT" != "success" ]]; then
+            printf '::error::Acceptance matrix must succeed; result=%s\n' "$ACCEPTANCE_RESULT"
+            exit 1
+          fi
+          printf 'Acceptance matrix succeeded.\n'
