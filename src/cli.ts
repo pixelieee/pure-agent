@@ -17,10 +17,10 @@ import { PureAgentTUI } from './ui/tui.ts';
 const HELP = `Pure Agent — developer SDK + terminal agent
 
 Usage:
-  pure-agent --openai --cwd ./project --trust-workspace
-  pure-agent --openai --cwd ./project --read-only --prompt "Explain this project"
-  pure-agent --openai --trust-workspace --session ./private/session.json
-  pure-agent --openai --read-only --resume ./private/session.json
+  pure --openai --cwd ./project --trust-workspace
+  pure --openai --cwd ./project --read-only --prompt "Explain this project"
+  pure --openai --trust-workspace --session ./private/session.json
+  pure --openai --read-only --resume ./private/session.json
 
 Uses the live OpenAI provider. --openai is an optional compatibility flag.
 --cwd <directory>        Workspace (default current directory; never changes host cwd)

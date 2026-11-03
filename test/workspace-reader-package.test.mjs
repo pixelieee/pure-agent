@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installOfflinePackage } from './package-install.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 // Use npm's JavaScript entry rather than platform-specific shell shims.
@@ -19,7 +20,7 @@ const run = (command, args, cwd) =>
     env: { ...process.env, npm_config_update_notifier: 'false' },
   });
 
-test('independent reader E2E: installed public SDK export executes real filesystem tool through core', () => {
+test('independent reader E2E: installed public SDK export executes real filesystem tool through core', (t) => {
   const consumer = mkdtempSync(join(tmpdir(), 'pure reader consumer-'));
   try {
     const [packed] = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', consumer], root));
@@ -47,7 +48,7 @@ test('independent reader E2E: installed public SDK export executes real filesyst
         },
       }),
     );
-    npm(['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], consumer);
+    installOfflinePackage(npmCli, consumer, (message) => t.diagnostic(message));
     writeFileSync(join(consumer, 'public.txt'), 'installed fixture');
     writeFileSync(join(consumer, 'ungranted.txt'), 'synthetic forbidden marker');
     writeFileSync(

@@ -1,3 +1,5 @@
+> 历史记录：本页描述最初只读原型的验收。当前能力见 README；新验收说明见 developer-live-acceptance.md。下方历史脚本路径用于定位当时版本，不再作为当前运行入口。
+
 # 当前验收记录 — 2026-11-02
 
 ## 离线门禁
@@ -43,7 +45,7 @@ cached input、reasoning 分别是输入、输出的子集，不应再次加到�
 
 ```sh
 npm ci --ignore-scripts
-node --env-file=/absolute/path/to/your-private.env examples/live-workspace-check.mjs
+node --env-file=/absolute/path/to/your-private.env examples/live-developer-check.mjs
 ```
 
 环境文件仅提供 `OPENAI_API_KEY`；不要将其内容贴入日志、问题、源码或聊天。脚本不自动寻找环境文件，固定使用上述官方服务、模型及限制，不提供端点覆盖。三轮 × 四步约束请求次数，不是账户花费硬限额；重跑会产生新用量，不添加自动重试或 CI 真实调用。

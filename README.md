@@ -1,6 +1,6 @@
 # Pure Agent
 
-可组合的开发者 agent。小核心，完整工具能力，代码与自然语言两种使用入口。
+可组合的开发者 agent。简称 **pure**，CLI 主命令为 `pure`，保留 `pure-agent` 兼容别名。小核心，完整工具能力，代码与自然语言两种使用入口。
 
 - **Core**：模型/工具循环、Schema 校验、事件、取消与可恢复会话快照。
 - **SDK Runtime**：文件读写、精确编辑、项目搜索、命令与后台进程管理。
@@ -87,7 +87,8 @@ UT、IT、安装包 E2E 使用实际文件/子进程/本地协议服务和明确
 main 已设置分支保护：PR 合入、必需 `Offline acceptance gate`、禁止强推和删除，管理员也不可绕过。Windows/Ubuntu 的必需检查任一失败、取消或跳过，汇总门禁不会放行。独立交叉验收后由负责人决定合并。
 
 - [产品边界与验收要求](docs/product-boundaries.md)
-- [历史真实模型运行证据](docs/live-acceptance.md)
+- [开发者工具真实模型验收](docs/developer-live-acceptance.md)
+- [历史只读原型运行证据](docs/live-acceptance.md)
 - [参与贡献](CONTRIBUTING.md)
 
 这是持续开发中的产品。具体支持范围与限制以上述实现和对应版本验收为准，不把未实现或未验证能力标成已完成。
