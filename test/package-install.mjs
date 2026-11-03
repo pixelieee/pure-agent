@@ -3,7 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 
-const timeout = 60_000;
+// This is an installation watchdog, not an SDK/CLI performance requirement.
+// Windows CI's >4,000-file OpenAI extraction exceeded 60s while another fresh
+// consumer completed in 45.6s. Keep bounded headroom for filesystem variance.
+export function offlineInstallTimeout(platform = process.platform) {
+  return platform === 'win32' ? 180_000 : 60_000;
+}
+
 const logBytes = 64 * 1024;
 
 // npm warns that its debug logs may contain secrets. Timer names are not
@@ -67,7 +73,13 @@ function logTail(path) {
   }
 }
 
-export function installOfflinePackage(npmCli, consumer, diagnostic) {
+export function installOfflinePackage(npmCli, consumer, diagnostic, timeout = offlineInstallTimeout()) {
+  // A shorter deadline lets regression tests exercise a real hung child without
+  // waiting three minutes. Callers cannot extend or disable the platform cap.
+  assert.ok(
+    Number.isInteger(timeout) && timeout > 0 && timeout <= offlineInstallTimeout(),
+    'Install deadline must be a positive integer within the platform watchdog',
+  );
   assert.ok(npmCli, 'Run this test with npm run test:package');
   const logs = join(consumer, '.npm-install-diagnostics');
   const start = performance.now();

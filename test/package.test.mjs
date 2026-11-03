@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { installOfflinePackage, npmDiagnosticLines } from './package-install.mjs';
+import { installOfflinePackage, npmDiagnosticLines, offlineInstallTimeout } from './package-install.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // npm supplies its JS entry when invoked through npm run test:package. Running
@@ -188,9 +188,57 @@ test('npm diagnostic collection preserves nonzero install failure and the offlin
     const messages = [];
     assert.throws(() => installOfflinePackage(cli, consumer, (message) => messages.push(message)), /status=7/);
     assert.match(messages.join('\n'), /idealTree Completed in 7ms/);
-    assert.match(messages.join('\n'), /timeoutMs":60000/);
+    const report = JSON.parse(messages[0].slice('Offline npm ci: '.length));
+    assert.equal(report.platform, process.platform);
+    assert.equal(report.timeoutMs, process.platform === 'win32' ? 180_000 : 60_000);
     assert.match(messages.join('\n'), /Package manifests present: 0\/1/);
     assert.doesNotMatch(messages.join('\n'), /synthetic-private-marker/);
+  } finally {
+    rmSync(consumer, { recursive: true, force: true });
+  }
+});
+
+test('offline install watchdog selects Windows only and defaults to the actual platform', () => {
+  assert.equal(offlineInstallTimeout('win32'), 180_000);
+  for (const platform of ['linux', 'darwin', 'freebsd', 'unknown']) {
+    assert.equal(offlineInstallTimeout(platform), 60_000);
+  }
+  assert.equal(offlineInstallTimeout(), process.platform === 'win32' ? 180_000 : 60_000);
+});
+
+test('offline install deadlines cannot disable or extend the platform watchdog', () => {
+  const limit = process.platform === 'win32' ? 180_000 : 60_000;
+  for (const timeout of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, limit + 1, '100']) {
+    assert.throws(
+      () => installOfflinePackage(npmCli, root, () => {}, timeout),
+      /Install deadline must be a positive integer within the platform watchdog/,
+    );
+  }
+});
+
+test('offline install expiration rejects and reaps a real started hung child', () => {
+  const consumer = mkdtempSync(join(tmpdir(), 'pure install timeout-'));
+  try {
+    const cli = join(consumer, 'hanging-npm.cjs');
+    writeFileSync(
+      cli,
+      `
+      require('node:fs').writeFileSync('ready.json', JSON.stringify({ pid: process.pid }));
+      setInterval(() => {}, 1000);
+    `,
+    );
+    writeFileSync(join(consumer, 'package-lock.json'), JSON.stringify({ packages: { '': {} } }));
+    const messages = [];
+    assert.throws(
+      () => installOfflinePackage(cli, consumer, (message) => messages.push(message), 2000),
+      /code=ETIMEDOUT/,
+    );
+    const { pid } = JSON.parse(readFileSync(join(consumer, 'ready.json'), 'utf8'));
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    const report = JSON.parse(messages[0].slice('Offline npm ci: '.length));
+    assert.equal(report.timeoutMs, 2000);
+    assert.equal(report.errorCode, 'ETIMEDOUT');
+    assert.equal(report.status, null);
   } finally {
     rmSync(consumer, { recursive: true, force: true });
   }
