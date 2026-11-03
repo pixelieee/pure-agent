@@ -276,3 +276,86 @@ test('controller cancellation stops a real managed command before accepting the 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('resume renders saved turns and recorded tools without executing or fabricating status', async () => {
+  const out = capture();
+  let modelCalls = 0;
+  let toolCalls = 0;
+  const snapshot = {
+    version: 1 as const,
+    messages: [
+      { role: 'system' as const, content: 'host instructions' },
+      { role: 'user' as const, content: 'original question\u001b[2J' },
+      {
+        role: 'assistant' as const,
+        content: 'Checking now',
+        providerData: { kind: 'private', data: 'opaque-secret' },
+        tool_calls: [
+          { id: 'a', type: 'function' as const, function: { name: 'read', arguments: '{bad json' } },
+          { id: 'b', type: 'function' as const, function: { name: 'other', arguments: '{"path":"file"}' } },
+        ],
+      },
+      { role: 'tool' as const, tool_call_id: 'a', content: '{"ok":false,"error":"invalid"}' },
+      { role: 'tool' as const, tool_call_id: 'b', content: '{"ok":true}' },
+      { role: 'assistant' as const, content: 'Recorded answer' },
+      { role: 'user' as const, content: 'unfinished turn' },
+    ],
+  };
+  const controller = new SessionController(
+    (system) =>
+      createAgent({
+        system,
+        model: {
+          complete: async () => {
+            modelCalls++;
+            return { role: 'assistant', content: 'fresh' };
+          },
+        },
+        tools: [
+          {
+            name: 'read',
+            description: 'read',
+            parameters: { type: 'object' },
+            execute: async () => {
+              toolCalls++;
+            },
+          },
+        ],
+      }),
+    out.view,
+    {
+      defaultSystem: 'host instructions',
+      persistence: {
+        save: async () => undefined,
+        load: async () => ({ snapshot }),
+        reset: () => {},
+      },
+    },
+  );
+  await controller.submit('/resume saved.json');
+  const text = out.text();
+  for (const expected of [
+    'original question',
+    'Checking now',
+    'Recorded: read',
+    '{bad json',
+    'invalid',
+    'Recorded: other',
+    'Recorded answer',
+    'unfinished turn',
+  ])
+    assert.ok(text.includes(expected), expected);
+  assert.ok(text.indexOf('original question') < text.indexOf('Checking now'));
+  assert.ok(text.indexOf('Recorded: read') < text.indexOf('Recorded: other'));
+  assert.ok(text.indexOf('Recorded: other') < text.indexOf('Recorded answer'));
+  assert.doesNotMatch(text, /opaque-secret/);
+  assert.equal(text.includes(String.fromCharCode(27)), false);
+  assert.match(text, /Previous tools were not rerun/);
+  assert.match(text, /run status and unsaved output may be unavailable/);
+  assert.equal(modelCalls, 0);
+  assert.equal(toolCalls, 0);
+  assert.equal((await controller.submit('continue'))?.status, 'completed');
+  assert.equal(modelCalls, 1);
+  assert.equal(toolCalls, 0);
+  await controller.dispose();
+});

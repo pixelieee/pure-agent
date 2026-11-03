@@ -43,6 +43,35 @@ export class SessionController {
     this.options = { ...options };
     this.session = options.initialSession ?? runtime(factory(options.defaultSystem));
   }
+  /** Render only persisted conversation data, never replaying model or tool calls. */
+  showHistory(snapshot: AgentSnapshot, path: string) {
+    this.view.panel('STATUS', `Saved conversation from ${path}:`);
+    const pending = new Map<string, { name: string; args: string }>();
+    for (const message of snapshot.messages) {
+      if (message.role === 'user') this.view.panel('USER', message.content);
+      if (message.role === 'assistant') {
+        if (message.content) this.view.panel('AGENT', message.content);
+        for (const call of message.tool_calls ?? [])
+          pending.set(call.id, { name: call.function.name, args: call.function.arguments });
+      }
+      if (message.role === 'tool' && message.tool_call_id) {
+        const call = pending.get(message.tool_call_id);
+        if (call) {
+          if (this.view.historyTool) this.view.historyTool(call.name, call.args, message.content ?? '');
+          else
+            this.view.panel(
+              'TOOL',
+              `Recorded: ${call.name}\nArguments (raw): ${call.args}\nResult: ${message.content ?? ''}`,
+            );
+          pending.delete(message.tool_call_id);
+        }
+      }
+    }
+    this.view.panel(
+      'STATUS',
+      `Session resumed: ${path}. Current workspace, tools and permissions apply. Previous tools were not rerun. Only saved conversation is shown; earlier run status and unsaved output may be unavailable.`,
+    );
+  }
   get busy() {
     return !!this.abort || this.operating;
   }
@@ -152,10 +181,7 @@ export class SessionController {
           }
           await this.replace(candidate);
           loaded.activate?.();
-          this.view.panel(
-            'STATUS',
-            `Session resumed: ${path}. Current workspace, tools and permissions apply. Previous tools were not rerun.`,
-          );
+          this.showHistory(loaded.snapshot, path);
         }
       });
       return;

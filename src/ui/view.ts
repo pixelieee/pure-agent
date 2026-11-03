@@ -48,6 +48,8 @@ export interface SessionView {
   panel(kind: PanelKind, content: unknown): void;
   event(event: AgentEvent, modeLabel?: string): void;
   finish(result: RunResult): void;
+  /** Display a recorded tool call and result without presenting them as live execution. */
+  historyTool?(name: string, args: string, result: string): void;
   reset?(): void;
 }
 
@@ -79,6 +81,12 @@ export class TerminalView implements SessionView {
       );
     }
     this.output.write(paint(`┗${'━'.repeat(width - 2)}┛`) + '\n');
+  }
+  historyTool(name: string, args: string, result: string) {
+    this.panel(
+      'TOOL',
+      `Recorded: ${name}\nArguments (raw): ${args}\nResult: ${result.length > 600 ? `${result.slice(0, 600)}\n[... truncated display only]` : result}`,
+    );
   }
   event(event: AgentEvent, modeLabel?: string) {
     if (event.type === 'model_start') this.panel('STATUS', `${modeLabel ? `${modeLabel} · ` : ''}model step`);

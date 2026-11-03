@@ -258,7 +258,10 @@ export class PureAgentTUI implements SessionView {
   panel(kind: PanelKind, content: unknown) {
     const text = safeText(content);
     if (kind === 'STATUS' && text.startsWith('Cancellation requested')) this.status = text;
-    else if (kind === 'AGENT') {
+    else if (kind === 'STATUS' && text.startsWith('Session resumed:')) {
+      this.status = 'ready · restored session';
+      this.transcript.addChild(new Text(deco.muted(text), 2, 1));
+    } else if (kind === 'AGENT') {
       this.transcript.addChild(new Text(deco.amber('  AGENT'), 0, 0));
       this.transcript.addChild(new Markdown(text, 2, 1, markdownTheme, { color: deco.ivory }, { renderLatex: false }));
     } else if (kind === 'USER') {
@@ -267,6 +270,12 @@ export class PureAgentTUI implements SessionView {
     } else {
       this.transcript.addChild(new Text((kind === 'ERROR' ? deco.red : deco.muted)(text), 2, 1));
     }
+    this.tui.requestRender();
+  }
+  historyTool(name: string, args: string, result: string) {
+    const tool = new ToolSummary('', safeText(name), safeText(args), () => this.expanded);
+    tool.result = safeText(result);
+    this.transcript.addChild(tool);
     this.tui.requestRender();
   }
   event(event: AgentEvent) {
