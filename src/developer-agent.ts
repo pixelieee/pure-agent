@@ -21,7 +21,7 @@ export interface DeveloperAgentOptions {
   root: string;
   system?: string;
   maxSteps?: number;
-  /** A host-owned decision point. Omission grants the registered local capabilities. */
+  /** Host-owned decision point for every tool call. Only true permits execution; omission denies all calls. */
   authorize?: (request: ToolAuthorization, context: { signal: AbortSignal }) => boolean | Promise<boolean>;
   /** Additional first-party or application tools, including connected MCP adapters. */
   tools?: Tool[];
@@ -71,7 +71,7 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
       async execute(args: unknown, context) {
         context.signal.throwIfAborted();
         if (
-          authorize &&
+          !authorize ||
           !(await authorized(
             () => authorize({ name: tool.name, args: structuredClone(args), workspaceRoot: root }, context),
             context.signal,

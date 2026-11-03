@@ -73,6 +73,8 @@ try {
 }
 ```
 
+**SDK 授权及兼容性：** `createDeveloperAgent` 的 `authorize` 是每次工具调用的宿主授权边界，包括读取、写入、进程及传入的扩展工具。省略回调（或传入 `undefined`）时，所有工具调用均被拒绝；只有回调返回布尔值 `true` 才能执行。回调应根据工具名、参数和工作目录作出明确决策，上面的 `async () => true` 会授予所有能力，包括可访问工作目录外文件和网络的宿主命令，不适用于不可信任务。此前省略回调会允许所有调用；升级后依赖旧行为的应用必须显式提供授权策略。CLI 已提供自己的只读或信任工作区策略，行为不变。底层 `createAgent` 和直接创建的文件/进程工具不受此 Runtime 策略保护；应用若直接使用它们，须自行建立授权边界。
+
 `createAgent` 接受任意实现通用契约的模型和工具，不依赖特定供应商、MCP 或 TUI。独立模块还包括 `pure-agent/session`、`pure-agent/tools/filesystem`、`pure-agent/tools/process`、`pure-agent/extensions/web`、`pure-agent/extensions/mcp`。
 
 ## 检查与验收

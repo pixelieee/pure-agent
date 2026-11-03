@@ -227,6 +227,7 @@ test('controller cancellation stops a real managed command before accepting the 
       createDeveloperAgent({
         root,
         system,
+        authorize: ({ name }) => name === 'exec_command',
         model: {
           complete: async () => {
             calls++;

@@ -158,3 +158,108 @@ test('independent runtime: explicit default instructions are not appended a seco
   });
   assert.deepEqual(runtime.agent.messages, [{ role: 'system', content: DEVELOPER_SYSTEM }]);
 });
+
+test('omitting SDK authorization denies local and custom tool calls without side effects', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-runtime-default-deny-'));
+  let customCalls = 0;
+  let step = 0;
+  const runtime = createDeveloperAgent({
+    root,
+    tools: [
+      {
+        name: 'custom_effect',
+        description: 'Synthetic effect',
+        parameters: { type: 'object' },
+        execute: async () => {
+          customCalls++;
+        },
+      },
+    ],
+    model: {
+      async complete(messages) {
+        if (step++ === 0)
+          return {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              { id: 'read', type: 'function', function: { name: 'ls', arguments: '{}' } },
+              {
+                id: 'write',
+                type: 'function',
+                function: { name: 'write', arguments: JSON.stringify({ path: 'write.txt', content: 'sentinel' }) },
+              },
+              {
+                id: 'exec',
+                type: 'function',
+                function: {
+                  name: 'exec_command',
+                  arguments: JSON.stringify({
+                    command: `${JSON.stringify(process.execPath)} -e "require('fs').writeFileSync('exec.txt','sentinel')"`,
+                  }),
+                },
+              },
+              { id: 'custom', type: 'function', function: { name: 'custom_effect', arguments: '{}' } },
+            ],
+          };
+        const results = messages.filter((message) => message.role === 'tool');
+        assert.equal(results.length, 4);
+        for (const result of results) {
+          const payload = JSON.parse(result.content ?? '{}');
+          assert.equal(payload.ok, false);
+          assert.match(payload.error, /Permission denied/);
+        }
+        return { role: 'assistant', content: 'Completed fixture.' };
+      },
+    },
+  });
+  t.after(async () => {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal((await runtime.agent.run('Attempt all tools without authorization')).status, 'completed');
+  assert.equal(step, 2);
+  assert.deepEqual(await readdir(root), []);
+  assert.equal(customCalls, 0);
+});
+
+test('explicit SDK authorization permits only the selected tools', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-runtime-explicit-allow-'));
+  const decisions: string[] = [];
+  let step = 0;
+  const runtime = createDeveloperAgent({
+    root,
+    authorize: ({ name }) => {
+      decisions.push(name);
+      return name === 'write';
+    },
+    model: {
+      async complete(messages) {
+        if (step++ === 0)
+          return {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'write',
+                type: 'function',
+                function: { name: 'write', arguments: JSON.stringify({ path: 'allowed.txt', content: 'sentinel' }) },
+              },
+              { id: 'exec', type: 'function', function: { name: 'exec_command', arguments: '{"command":"echo no"}' } },
+            ],
+          };
+        const results = messages.filter((message) => message.role === 'tool');
+        assert.equal(results.length, 2);
+        assert.notEqual(JSON.parse(results[0].content ?? '{}').ok, false);
+        assert.match(JSON.parse(results[1].content ?? '{}').error, /Permission denied/);
+        return { role: 'assistant', content: 'Completed fixture.' };
+      },
+    },
+  });
+  t.after(async () => {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+  assert.equal((await runtime.agent.run('Exercise a selective policy')).status, 'completed');
+  assert.deepEqual(decisions.sort(), ['exec_command', 'write']);
+  assert.deepEqual(await readdir(root), ['allowed.txt']);
+});
