@@ -127,7 +127,7 @@ test('CLI live label and low/medium configuration use injected model only', asyn
     for (const reasoning of ['low', 'medium'] as const) {
       let configured = false;
       const code = await main(
-        ['--openai', '--model', 'mock-model', '--reasoning', reasoning, '--prompt', 'read project'],
+        ['--openai', '--read-only', '--model', 'mock-model', '--reasoning', reasoning, '--prompt', 'read project'],
         {
           env: { OPENAI_API_KEY: 'offline-placeholder-not-a-key' },
           projectRoot: root,
@@ -146,7 +146,7 @@ test('CLI live label and low/medium configuration use injected model only', asyn
                         {
                           id: 'read',
                           type: 'function',
-                          function: { name: 'read_project_file', arguments: '{"path":"README.md"}' },
+                          function: { name: 'read', arguments: '{"path":"README.md"}' },
                         },
                       ],
                     },

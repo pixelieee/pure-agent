@@ -51,6 +51,12 @@ export interface RunOptions {
   signal?: AbortSignal;
   onEvent?: (event: AgentEvent) => void | Promise<void>;
 }
+/** Versioned conversation data only. Models, tool implementations, and credentials are never included. */
+export interface AgentSnapshot {
+  version: 1;
+  messages: Message[];
+}
+
 export interface AgentOptions {
   model: Model;
   system?: string;
@@ -98,6 +104,102 @@ function assistantMessage(reply: Message): Message {
     ...(reply.providerData ? { providerData: structuredClone(reply.providerData) } : {}),
   };
   return assistant;
+}
+
+/** Reject lossy JSON values rather than silently changing opaque provider continuation data. */
+function jsonValue(value: unknown, ancestors = new Set<object>()): void {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+  if (typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0)) return;
+  if (!value || typeof value !== 'object' || ancestors.has(value)) throw new Error('Invalid snapshot JSON data');
+  const prototype = Object.getPrototypeOf(value);
+  if (Array.isArray(value) ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null)
+    throw new Error('Invalid snapshot JSON object');
+  ancestors.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (Array.isArray(value) && key === 'length') continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (typeof key !== 'string' || !descriptor?.enumerable || !('value' in descriptor))
+      throw new Error('Invalid snapshot JSON property');
+    jsonValue(descriptor.value, ancestors);
+  }
+  if (
+    Array.isArray(value) &&
+    (Object.keys(value).length !== value.length || Object.keys(value).some((key, index) => key !== String(index)))
+  )
+    throw new Error('Invalid snapshot JSON array');
+  ancestors.delete(value);
+}
+
+function object(value: unknown, allowed: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid snapshot record');
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !allowed.includes(key))) throw new Error('Unknown snapshot field');
+  return record;
+}
+
+/** Validate a complete, replay-safe history without executing tools or interpreting provider data. */
+export function validateAgentSnapshot(value: unknown): AgentSnapshot {
+  jsonValue(value);
+  const snapshot = object(value, ['version', 'messages']);
+  if (snapshot.version !== 1) throw new Error('Unsupported agent snapshot version');
+  if (!Array.isArray(snapshot.messages)) throw new Error('Invalid snapshot messages');
+  const pending = new Set<string>();
+  let previous: unknown;
+  for (const [index, entry] of snapshot.messages.entries()) {
+    const message = object(entry, ['role', 'content', 'tool_calls', 'tool_call_id', 'providerData']);
+    const role = message.role;
+    if (pending.size && role !== 'tool') throw new Error('Snapshot has unfinished tool calls');
+    if (role === 'tool') {
+      if (
+        !pending.size ||
+        message.tool_call_id !== pending.values().next().value ||
+        typeof message.content !== 'string'
+      )
+        throw new Error('Snapshot has unmatched or out-of-order tool results');
+      pending.delete(message.tool_call_id as string);
+    } else {
+      if (Object.hasOwn(message, 'tool_call_id')) throw new Error('Invalid snapshot tool result');
+      if (role === 'system') {
+        if (index !== 0 || typeof message.content !== 'string') throw new Error('Invalid snapshot system message');
+      } else if (role === 'user') {
+        if (typeof message.content !== 'string' || !message.content.trim())
+          throw new Error('Invalid snapshot user message');
+      } else if (role === 'assistant') {
+        if (previous !== 'user' && previous !== 'tool') throw new Error('Invalid snapshot assistant sequence');
+        if (message.content !== null && typeof message.content !== 'string')
+          throw new Error('Invalid snapshot assistant content');
+        if (Object.hasOwn(message, 'tool_calls')) {
+          if (!Array.isArray(message.tool_calls) || !message.tool_calls.length)
+            throw new Error('Invalid snapshot tool calls');
+          for (const entry of message.tool_calls) {
+            const call = object(entry, ['id', 'type', 'function']);
+            const fn = object(call.function, ['name', 'arguments']);
+            if (
+              typeof call.id !== 'string' ||
+              !call.id ||
+              pending.has(call.id) ||
+              call.type !== 'function' ||
+              typeof fn.name !== 'string' ||
+              !fn.name ||
+              typeof fn.arguments !== 'string'
+            )
+              throw new Error('Invalid or duplicate snapshot tool call');
+            pending.add(call.id);
+          }
+        }
+        if (Object.hasOwn(message, 'providerData')) {
+          const provider = object(message.providerData, ['kind', 'data']);
+          if (typeof provider.kind !== 'string' || !provider.kind || !Object.hasOwn(provider, 'data'))
+            throw new Error('Invalid snapshot provider continuation data');
+        }
+      } else throw new Error('Invalid snapshot message role');
+    }
+    if (role !== 'assistant' && (Object.hasOwn(message, 'tool_calls') || Object.hasOwn(message, 'providerData')))
+      throw new Error('Invalid snapshot assistant fields');
+    previous = role;
+  }
+  if (pending.size) throw new Error('Snapshot has unfinished tool calls; execution cannot safely be resumed');
+  return structuredClone(value) as AgentSnapshot;
 }
 
 interface RegisteredTool extends Tool {
@@ -152,11 +254,24 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
     const parameters = structuredClone(tool.parameters);
     registry.set(tool.name, { ...tool, parameters, validateSchema: compileParameters(parameters) });
   }
-  const history: Message[] = system ? [{ role: 'system', content: system }] : [];
+  let history: Message[] = system ? [{ role: 'system', content: system }] : [];
   let running = false;
   return {
     get messages(): Message[] {
       return structuredClone(history);
+    },
+    /** Call after run settles, never from an in-flight observer or tool. */
+    snapshot(): AgentSnapshot {
+      if (running) throw new Error('Cannot snapshot an agent session while running');
+      return validateAgentSnapshot({ version: 1, messages: history });
+    },
+    /** Replace idle history only. Restoring never runs a model or repeats a tool. */
+    restore(snapshot: unknown): void {
+      if (running) throw new Error('Cannot restore an agent session while running');
+      const restored = validateAgentSnapshot(snapshot);
+      if (system && (restored.messages[0]?.role !== 'system' || restored.messages[0].content !== system))
+        throw new Error('Snapshot system message is incompatible with this agent');
+      history = restored.messages;
     },
     async run(input: string, options: RunOptions = {}): Promise<RunResult> {
       if (running) throw new Error('This agent session is already running');

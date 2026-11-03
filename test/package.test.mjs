@@ -20,7 +20,7 @@ const run = (command, args, cwd) =>
     env: { ...process.env, NO_COLOR: '1', npm_config_update_notifier: 'false' },
   });
 
-test('private tarball installs as a JavaScript SDK and executable demo CLI', () => {
+test('private tarball installs as a JavaScript SDK and executable live-only CLI', () => {
   const consumer = mkdtempSync(join(tmpdir(), 'pure agent package-'));
   try {
     const [packed] = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', consumer], root));
@@ -52,7 +52,7 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
         dependencies,
         // Static script text; npm resolves the actual platform bin shim. Keep a
         // multiword prompt to verify argument quoting, not merely entry loading.
-        scripts: { 'smoke:cli': 'pure-agent --demo --prompt "Package smoke test"' },
+        scripts: { 'smoke:cli': 'pure-agent --help' },
       }),
     );
     // npm ci caches locked tarballs, not the registry packuments needed by an
@@ -125,8 +125,12 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
       consumer,
     );
     const output = npm(['run', '--silent', 'smoke:cli'], consumer);
-    assert.match(output, /DEMO/);
-    assert.match(output, /Package smoke test/i);
+    assert.doesNotMatch(output, /--demo/);
+    assert.ok(!paths.includes('dist/demo.js'));
+    assert.ok(!paths.includes('dist/ui/replay.js'));
+    assert.ok(!paths.some((path) => path.startsWith('test/')));
+    assert.match(output, /--trust-workspace/);
+    assert.match(output, /--prompt/);
   } finally {
     rmSync(consumer, { recursive: true, force: true });
   }

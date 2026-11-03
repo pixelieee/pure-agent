@@ -1,6 +1,6 @@
 # Opt-in workspace reading
 
-The SDK offers an optional bounded, read-only UTF-8 file tool. It is **not registered by default**. The CLI's existing four public-document allowlist is unchanged.
+The SDK offers an optional bounded, read-only UTF-8 file tool. It is **not registered by default**. This is a legacy opt-in SDK helper; the developer CLI now uses the workspace-wide read/write/edit/search tool pack. See README for current capabilities.
 
 ```ts
 import { createAgent, createWorkspaceFileTool } from 'pure-agent';

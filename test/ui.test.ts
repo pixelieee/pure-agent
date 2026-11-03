@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { createAgent } from '../src/core.ts';
-import { createDemoAgent } from '../src/demo.ts';
+import { createTestAgent } from './fixtures/note-agent.ts';
 import { SessionController, interactive } from '../src/ui/controller.ts';
 import { TerminalView, safeText, wrapText } from '../src/ui/view.ts';
 
@@ -39,9 +39,9 @@ test('deco theme renders distinct panels and safe content', () => {
   assert.match(out.text(), /48;2;15;17;25/);
   for (const line of safeText(out.text()).trimEnd().split('\n')) assert.equal([...line].length, 50);
 });
-test('demo calls and resolves a real tool through core', async () => {
+test('test fixture calls and resolves a real tool through core', async () => {
   const out = capture();
-  const controller = new SessionController(createDemoAgent, out.view);
+  const controller = new SessionController(createTestAgent, out.view);
   const result = await controller.submit('  a   useful note ');
   assert.equal(result?.status, 'completed');
   assert.match(out.text(), /→ format_note/);
@@ -53,7 +53,7 @@ test('create uses exact instructions and new restores a fresh session', async ()
   const out = capture();
   const controller = new SessionController((system) => {
     configurations.push(system);
-    return createDemoAgent(system);
+    return createTestAgent(system);
   }, out.view);
   await controller.submit('/create 用中文回答');
   assert.equal(configurations.at(-1), '用中文回答');
@@ -68,7 +68,7 @@ test('create uses exact instructions and new restores a fresh session', async ()
 });
 test('controller commands and ignored inputs resolve without a run result', async () => {
   const out = capture();
-  const controller = new SessionController(createDemoAgent, out.view);
+  const controller = new SessionController(createTestAgent, out.view);
   for (const input of ['  ', '/help', '/new', '/create instructions', '/create', '/unknown', '/quit', 'after close']) {
     assert.equal(await controller.submit(input), undefined);
     assert.equal(controller.busy, false);
@@ -79,7 +79,7 @@ test('controller reports a rejected run, returns undefined, and permits a subseq
   const out = capture();
   let rejectNext = true;
   const controller = new SessionController((system) => {
-    const agent = createDemoAgent(system);
+    const agent = createTestAgent(system);
     return {
       ...agent,
       run: async (...args: Parameters<typeof agent.run>) => {
@@ -129,22 +129,25 @@ test('Ctrl+C cancels active run, leaves session open, then exits when idle', asy
 });
 test('piped commands drain in order through EOF without hanging', async () => {
   const out = capture();
-  const controller = new SessionController(createDemoAgent, out.view);
+  const controller = new SessionController(createTestAgent, out.view);
   await interactive(controller, Readable.from(['/create test\nfirst\n/new\nsecond\n/quit\nignored\n']), { write() {} });
   assert.equal((out.text().match(/completed · 2/g) ?? []).length, 2);
   assert.doesNotMatch(out.text(), /ignored/);
 });
-test('CLI requires explicit demo and supports one-shot prompt', () => {
+test('CLI is live by default and rejects removed demo mode', () => {
   const run = (...args: string[]) =>
-    spawnSync(process.execPath, ['src/cli.ts', ...args], { encoding: 'utf8', timeout: 3000 });
+    spawnSync(process.execPath, ['src/cli.ts', ...args], {
+      encoding: 'utf8',
+      timeout: 3000,
+      env: { PATH: process.env.PATH },
+    });
   assert.equal(run().status, 2);
-  assert.equal(run('--help').status, 0);
-  assert.equal(run('--demo', '--prompt').status, 2);
-  const demo = run('--demo', '--prompt', 'hello');
-  assert.equal(demo.status, 0);
-  assert.match(demo.stdout, /format_note/);
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: Verify non-TTY output contains no ESC control bytes.
-  assert.doesNotMatch(demo.stdout, /\x1b/);
+  const help = run('--help');
+  assert.equal(help.status, 0);
+  assert.doesNotMatch(help.stdout, /--demo|scripted fixture/);
+  assert.match(help.stdout, /--trust-workspace/);
+  assert.equal(run('--prompt').status, 2);
+  assert.equal(run('--demo', '--prompt', 'hello').status, 2);
 });
 
 test('controller takes presentation and default instructions from composition root', async () => {

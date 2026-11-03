@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { main } from '../src/cli.ts';
 import { DEFAULT_CONFIG, loadConfig, resolveConfig } from '../src/config.ts';
-import { createProjectAgent, PROJECT_FILES, PROJECT_SYSTEM } from '../src/project-agent.ts';
+import { createDeveloperAgent, DEVELOPER_SYSTEM } from '../src/developer-agent.ts';
 import { SessionController } from '../src/ui/controller.ts';
 import { TerminalView } from '../src/ui/view.ts';
 import type { Model } from '../src/core.ts';
@@ -25,8 +25,8 @@ test('config defaults are explicit, bounded and immutable without mutating calle
     system: '简洁回答 🧪',
     model: 'offline-model',
     reasoning: 'medium' as const,
-    maxSteps: 12,
-    maxOutputTokens: 2048,
+    maxSteps: 1000,
+    maxOutputTokens: 65536,
   };
   const original = structuredClone(input);
   const resolved = resolveConfig(input);
@@ -37,9 +37,9 @@ test('config defaults are explicit, bounded and immutable without mutating calle
   input.model = 'changed-after-resolution';
   assert.equal(resolved.model, 'offline-model');
   assert.deepEqual(resolveConfig(), DEFAULT_CONFIG);
-  assert.equal(DEFAULT_CONFIG.system, PROJECT_SYSTEM);
-  assert.equal(DEFAULT_CONFIG.maxSteps, 4);
-  assert.equal(DEFAULT_CONFIG.maxOutputTokens, 1024);
+  assert.equal(DEFAULT_CONFIG.system, DEVELOPER_SYSTEM);
+  assert.equal(DEFAULT_CONFIG.maxSteps, 64);
+  assert.equal(DEFAULT_CONFIG.maxOutputTokens, 4096);
   const empty = {};
   resolveConfig(empty);
   assert.deepEqual(empty, {}, 'validation must not inject schema defaults into callers');
@@ -73,14 +73,14 @@ test('config rejects type coercion, unknown fields and unsafe cap values without
     { maxSteps: 0 },
     { maxSteps: -1 },
     { maxSteps: 1.5 },
-    { maxSteps: 13 },
+    { maxSteps: 1001 },
     { maxSteps: Infinity },
     { maxOutputTokens: '1024' },
     { maxOutputTokens: false },
     { maxOutputTokens: 0 },
     { maxOutputTokens: -1 },
     { maxOutputTokens: 1.5 },
-    { maxOutputTokens: 2049 },
+    { maxOutputTokens: 65537 },
     { apiKey: secret },
     { baseURL: secret },
     { tools: [] },
@@ -106,15 +106,15 @@ test('config rejects type coercion, unknown fields and unsafe cap values without
 });
 
 test('explicit config loading preserves Unicode and file bytes; rejects malformed, missing and nonfile inputs', async () => {
-  const body = JSON.stringify({ system: '你好 🌏\n保持原文', maxSteps: 12, maxOutputTokens: 2048 });
+  const body = JSON.stringify({ system: '你好 🌏\n保持原文', maxSteps: 1000, maxOutputTokens: 65536 });
   const f = await fixture(body);
   try {
     const loaded = await loadConfig(f.path);
     assert.equal(loaded.system, '你好 🌏\n保持原文');
-    assert.equal(loaded.maxSteps, 12);
+    assert.equal(loaded.maxSteps, 1000);
     assert.equal(Object.isFrozen(loaded), true);
     assert.equal(await readFile(f.path, 'utf8'), body);
-    assert.deepEqual(resolveConfig(loaded).maxOutputTokens, 2048);
+    assert.deepEqual(resolveConfig(loaded).maxOutputTokens, 65536);
     for (const invalid of [
       '{"system":"' + secret + '",',
       '{"apiKey":"' + secret + '"}',
@@ -158,7 +158,7 @@ test('CLI uses defaults < explicit JSON < flags regardless of flag ordering, and
       const configured = args.includes('--config');
       const explicit = args.includes('--model');
       assert.equal(
-        await main(['--openai', ...args, '--prompt', 'Unicode 输入 🌏'], {
+        await main(['--openai', '--read-only', ...args, '--prompt', 'Unicode 输入 🌏'], {
           env: { OPENAI_API_KEY: dummyKey },
           projectRoot: f.root,
           modelFactory: (options) => {
@@ -172,18 +172,29 @@ test('CLI uses defaults < explicit JSON < flags regardless of flag ordering, and
             return {
               complete: async (messages, tools) => {
                 assert.equal(messages.at(-1)?.content, 'Unicode 输入 🌏');
-                assert.ok(messages[0].content?.startsWith(PROJECT_SYSTEM));
+                assert.ok(messages[0].content?.startsWith(DEVELOPER_SYSTEM));
                 if (configured) {
                   assert.ok(messages[0].content !== null);
                   assert.match(messages[0].content, /只读中文 🧪/);
                 }
                 assert.deepEqual(
                   tools.map((tool) => tool.name),
-                  ['read_project_file'],
+                  [
+                    'read',
+                    'write',
+                    'edit',
+                    'find',
+                    'ls',
+                    'grep',
+                    'exec_command',
+                    'start_process',
+                    'process_status',
+                    'read_process',
+                    'write_process',
+                    'kill_process',
+                  ],
                 );
-                assert.deepEqual((tools[0].parameters.properties as { path: { enum: string[] } }).path.enum, [
-                  ...PROJECT_FILES,
-                ]);
+                assert.equal(Object.hasOwn((tools[0].parameters.properties as { path: object }).path, 'enum'), false);
                 return { role: 'assistant', content: 'Offline success.' };
               },
             };
@@ -198,7 +209,7 @@ test('CLI uses defaults < explicit JSON < flags regardless of flag ordering, and
   }
 });
 
-test('CLI invalid config emits safe errors before provider construction and rejects config in demo mode', async (t) => {
+test('CLI invalid config emits safe errors before provider construction and rejects removed demo mode', async (t) => {
   let output = '';
   t.mock.method(process.stdout, 'write', (text: string) => {
     output += text;
@@ -220,22 +231,24 @@ test('CLI invalid config emits safe errors before provider construction and reje
       '{"' + secret + '":"' + secret + '"}',
       '{"system":"' + secret + '",',
       '{"maxSteps":0}',
-      '{"maxOutputTokens":2049}',
+      '{"maxOutputTokens":65537}',
     ]) {
       output = '';
       await writeFile(f.path, body);
-      assert.equal(await main(['--openai', '--config', f.path, '--prompt', 'test'], options), 2);
+      assert.equal(await main(['--openai', '--read-only', '--config', f.path, '--prompt', 'test'], options), 2);
       assert.ok(output.length > 0);
       assert.equal(output.includes(secret), false);
       assert.equal(output.includes(body), false);
     }
     output = '';
-    assert.equal(await main(['--openai', '--config', join(f.root, secret), '--prompt', 'test'], options), 2);
+    assert.equal(
+      await main(['--openai', '--read-only', '--config', join(f.root, secret), '--prompt', 'test'], options),
+      2,
+    );
     assert.equal(output.includes(secret), false);
     assert.equal(await main(['--demo', '--config', f.path, '--prompt', 'test'], options), 2);
-    assert.equal(await main(['--openai', '--config'], options), 2);
-    assert.equal(await main(['--demo', '--prompt', '你好   世界 🌏'], options), 0);
-    assert.match(output, /scripted fixture/);
+    assert.equal(await main(['--openai', '--read-only', '--config'], options), 2);
+    assert.equal(await main(['--demo', '--prompt', '你好   世界 🌏'], options), 2);
   } finally {
     await f.clean();
   }
@@ -246,11 +259,11 @@ test('configured loop caps are enforced at both boundaries and /new restores res
   t.mock.method(process.stderr, 'write', () => true);
   const f = await fixture();
   try {
-    for (const maxSteps of [1, 12]) {
+    for (const maxSteps of [1, 1000]) {
       await writeFile(f.path, JSON.stringify({ maxSteps }));
       let calls = 0;
       assert.equal(
-        await main(['--openai', '--config', f.path, '--prompt', 'read repeatedly'], {
+        await main(['--openai', '--read-only', '--config', f.path, '--prompt', 'read repeatedly'], {
           env: { OPENAI_API_KEY: dummyKey },
           projectRoot: f.root,
           modelFactory: () => ({
@@ -261,7 +274,7 @@ test('configured loop caps are enforced at both boundaries and /new restores res
                 {
                   id: `read-${++calls}`,
                   type: 'function',
-                  function: { name: 'read_project_file', arguments: '{"path":"README.md"}' },
+                  function: { name: 'read', arguments: '{"path":"README.md"}' },
                 },
               ],
             }),
@@ -274,14 +287,25 @@ test('configured loop caps are enforced at both boundaries and /new restores res
     const systems: string[] = [];
     const model: Model = {
       complete: async (messages, tools) => {
-        assert.ok(messages[0].content?.startsWith(PROJECT_SYSTEM));
+        assert.ok(messages[0].content?.startsWith(DEVELOPER_SYSTEM));
         assert.deepEqual(
           tools.map((tool) => tool.name),
-          ['read_project_file'],
+          [
+            'read',
+            'write',
+            'edit',
+            'find',
+            'ls',
+            'grep',
+            'exec_command',
+            'start_process',
+            'process_status',
+            'read_process',
+            'write_process',
+            'kill_process',
+          ],
         );
-        assert.deepEqual((tools[0].parameters.properties as { path: { enum: string[] } }).path.enum, [
-          ...PROJECT_FILES,
-        ]);
+        assert.equal(Object.hasOwn((tools[0].parameters.properties as { path: object }).path, 'enum'), false);
         return { role: 'assistant', content: 'done' };
       },
     };
@@ -289,7 +313,7 @@ test('configured loop caps are enforced at both boundaries and /new restores res
     const controller = new SessionController(
       (system) => {
         systems.push(system);
-        const agent = createProjectAgent(model, system, f.root, { maxSteps: config.maxSteps });
+        const agent = createDeveloperAgent({ model, system, root: f.root, maxSteps: config.maxSteps });
         return agent;
       },
       new TerminalView({ write: () => {} }),

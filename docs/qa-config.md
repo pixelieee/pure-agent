@@ -1,3 +1,5 @@
+> Historical acceptance record for the initial read-only prototype. Current CLI capabilities and limits are documented in README and configuration.md.
+
 # Independent configuration QA
 
 ## Scope

@@ -4,6 +4,8 @@ export const commands = [
   { value: '/help', label: '/help', description: 'Commands and keyboard shortcuts' },
   { value: '/new', label: '/new', description: 'Clear model history; restore default instructions' },
   { value: '/create', label: '/create', description: '<instructions> · replace instructions and clear history' },
+  { value: '/save', label: '/save', description: '[file] · save private session history' },
+  { value: '/resume', label: '/resume', description: '<file> · restore history with current permissions' },
   { value: '/quit', label: '/quit', description: 'Exit this session' },
 ];
 /** Commands only: no implicit file enumeration, shell execution or home access. */

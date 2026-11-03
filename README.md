@@ -1,114 +1,93 @@
 # Pure Agent
 
-一个独立工作的基本 Agent，同一核心用于 SDK 和终端入口。当前是可测试的早期原型，不是完整产品发布。
+可组合的开发者 agent。小核心，完整工具能力，代码与自然语言两种使用入口。
 
-## 范围
+- **Core**：模型/工具循环、Schema 校验、事件、取消与可恢复会话快照。
+- **SDK Runtime**：文件读写、精确编辑、项目搜索、命令与后台进程管理。
+- **CLI/TUI**：共享 SDK 运行时，工作目录、权限模式、保存/恢复、流式输出。
+- **扩展层**：HTTP 页面获取、OpenAI 托管搜索、官方 MCP 客户端桥接。
 
-- 单个会话内的模型 → 工具 → 观察 → 模型循环。
-- 注入模型与工具；有界执行、可观察事件、协作式取消。
-- SDK、CLI 和 Dark Deco 风格终端界面共用执行核心。
-- 提供显式离线演示与 OpenAI 适配器；真实模式需要安全配置 API Key，已通过三轮真实项目资料交互测试（范围见 [当前验收记录](docs/live-acceptance.md)，早期记录保留于 docs/live-test-results.json）。
-- 不实现 Team、多 Agent 编排、后台调度或管理平台。
+不提供 demo 模式。产品入口使用真实模型；自动化测试中的模拟模型只用于测试，不代表真实模型任务表现。
 
-## 本地运行
+## 运行
 
-需要 Node.js 24.2 或更高版本。运行 TypeScript 源文件不需要构建。
+需要 Node.js >=24.2。安装依赖后，使用环境变量提供自己的 OpenAI API Key，不要提交密钥。
 
-```sh
+```bash
 npm ci --ignore-scripts
-node examples/basic.ts
-node --test test/*.test.ts
-node src/cli.ts --demo
-node src/cli.ts --demo --prompt "整理这条演示笔记"
+npm start -- --cwd ./your-project --trust-workspace
+npm start -- --cwd ./your-project --read-only --prompt "介绍这个项目的入口和测试方式"
 ```
 
-演示模型是确定性的测试替身，不具备自然语言推理能力。它用于检查真实执行循环、工具调用和界面；不要用演示输出判断模型效果。
+`--trust-workspace` 授予文件修改和宿主权限命令执行。**命令不是沙箱隔离的，可以访问工作目录外的文件与网络。** 交互启动时会询问；非交互必须明确选择 `--trust-workspace` 或 `--read-only`。
+
+默认模型为 gpt-5.6-luna、low 思考。`--model`、`--reasoning`、`--max-steps`、`--max-output-tokens` 可覆盖设置；实际费用和模型能力由供应商决定。工具错误、限制和取消不会被包装成成功。
+
+```bash
+npm start -- --cwd ./your-project --trust-workspace --session .pure-agent/session.json
+npm start -- --cwd ./your-project --read-only --resume .pure-agent/session.json
+npm start -- --cwd ./your-project --read-only --web-search --web-fetch
+npm start -- --cwd ./your-project --trust-workspace --mcp-config /path/to/servers.json
+```
+
+会话文件包含对话、项目内容和工具结果，未加密，应保持私有。会话路径相对于 `--cwd`。恢复不会重放已有工具副作用，也不会恢复旧权限或已经结束的进程。
+
+MCP 配置必须显式指定，格式为 `{ "servers": [...] }`。每个 server 必须有 `namespace` 和 `transport`。stdio 使用 `command`、可选 `args/cwd/env`；HTTP 使用精确 `url` 和可选 `headers`。配置可能含凭据，不要提交。连接持续到 CLI 退出；`/new` 不会重置外部 MCP 服务器状态。
+
+## 默认工具
+
+| 能力 | 工具 | 行为 |
+| --- | --- | --- |
+| 文件 | read / write / edit | 分页 UTF-8 读取、原子写入、唯一精确替换、可选内容哈希前置条件 |
+| 项目搜索 | grep / find / ls | gitignore 与 glob、隐藏项目文件、稳定输出和截断标识 |
+| 命令 | exec_command | 真实退出码、超时、取消、stdout/stderr 与日志 |
+| 后台进程 | start_process / process_status / read_process / write_process / kill_process | 会话所有权、增量输出、输入、终止与清理 |
+| 网页 | web_fetch（显式开启） | 公网静态文本/HTML 获取，来源、大小限制、重定向校验 |
+| 搜索 | OpenAI hosted web_search（显式开启） | 实际供应商搜索与来源引用；可能产生额外费用 |
+| MCP | 显式配置服务器的命名空间工具 | 官方协议连接、发现、调用、取消和关闭 |
+
+文件工具限制工作目录，支持目录内安全符号链接。搜索/编辑不是二进制文件编辑器。进程目前使用 pipes，不是 PTY。POSIX 进程组无法阻止主动脱离进程组的程序；Windows 清理能力以实际平台验收为准，不能据此宣称安全沙箱。
+
+Web 获取不执行 JavaScript，不登录、不自动发送凭据，不是浏览器。MCP 图片/音频/资源内容会明确报告当前表示限制；工具列表变化需要重新连接。取消远端调用不保证回滚远端副作用。
 
 ## SDK
 
-源码入口为 `src/index.ts`；构建后的安装包通过 `import { createAgent } from 'pure-agent'` 使用，并包含声明文件。注入 `Model` 和 `Tool`，完整可运行示例见源码包中的 `examples/basic.ts`。
+安装包导出分离入口，让应用按需组合能力：
 
-模型适配器负责把提供商协议转换为 SDK 的消息格式。工具 Schema 声明参数结构，Ajv 在执行前强制校验；工具可额外提供业务校验，再执行操作。执行核心不导入 CLI、模型 SDK、数据库或第三方服务。
+```ts
+import { createAgent } from 'pure-agent/core';
+import { createDeveloperAgent } from 'pure-agent/runtime';
+import { createOpenAIModel } from 'pure-agent/providers/openai';
 
-`run()` 返回 `completed`、`blocked`、`cancelled` 或 `limit`。其中 `completed` 只表示模型结束本轮工具循环，**不证明任务结果正确**。业务验收由调用方完成。
-
-`messages` 返回独立快照。同一个 Agent 实例保留会话上下文，但不允许重叠运行。需要独立会话时创建新实例。
-
-## 设计约束
-
-只针对已经存在的职责建立边界：模型协议、工具执行、会话循环、终端交互。通过接口注入依赖，不为未来的组合功能创建空壳类或多层工厂。
-
-核心不自动重试工具，防止重复写入等副作用。观察回调出错不会触发工具重跑。工具调用按顺序执行；取消后，未执行工具得到明确的取消结果，保持消息协议完整。
-
-## 安全和已知边界
-
-- `Tool.parameters` 使用同步 JSON Schema draft-07，注册时通过 Ajv 编译，执行前强制校验。不自动转换类型、插入默认值或删除多余字段；是否禁止额外字段由 Schema 决定。可选 `Tool.validate` 只增加业务约束，不能绕过 Schema，也不能修改待执行参数。
-- 取消是协作式的。模型适配器与工具必须响应 `AbortSignal`；不响应的实现仍可能阻塞。取消不会撤销已经完成的外部操作。
-- 核心不是沙箱。工具拥有宿主进程赋予的权限；不应直接把未审批的 shell、文件写入或账号操作暴露给模型。
-- 暂无上下文压缩、持久化恢复、完整权限审批系统或自动重试；真实适配器限制每次输出与步骤，不提供账户级花费硬限额。
-- API 密钥不要写入源码、提交到 Git 或输出到日志。真实联调前另行确认模型服务、凭据注入和调用预算。
-
-## Build in public
-
-公开小步实现、取舍与可复现证据，不把计划写成已交付能力。[路线图](docs/roadmap.md) 区分已合并主干、待合并 PR 与后续方向；[贡献指南](CONTRIBUTING.md) 说明验收和草稿 PR 流程。
-
-先验证单 Agent 的任务完成质量，再补必要的工具与可靠性机制；多 Agent 组合放在基本单元成熟之后。公开进展不包含密钥、私人笔记或原始调用轨迹；这类本地材料放在忽略的 `.private/`，凭据优先由宿主注入。Git 忽略规则不是保密或访问控制机制。
-
-## 当前验证
-
-2026-11-02 状态快照：主干已合并至 PR #11，包括显式配置、流式输出、Windows 安装包验收、可选 SDK 工作区读取工具、CI 汇总门禁、严格静态检查及 Biome 格式 / lint 门禁与回归测试。主干提交为 [`eb054fe`](https://github.com/pixelieee/pure-agent/commit/eb054fed081bf06328f9b3f736498d74159967f4)；[双平台 CI run 41502935573](https://github.com/pixelieee/pure-agent/actions/runs/41502935573) 记录 Ubuntu、Windows 均通过 170 项离线测试及 2 项安装包测试，`Offline acceptance gate` 通过。具体源码树、真实模型验证及未验证项见 [验收记录](docs/live-acceptance.md)。
-
-终端已有交互输入、窄屏降级、重定向输出、取消后继续运行与退出的验证记录。当前真实模型记录覆盖三轮限定项目资料交互、流式增量事件与 Token 用量；不代表 GUI 验收、通用任务准确率或生产验收。
-
-安装开发依赖后执行 `npm run check`，其中类型检查已启用 `noUnusedLocals`、`noUnusedParameters`、`noFallthroughCasesInSwitch` 和 `noImplicitReturns`；Biome 2.6.4 的只读格式与推荐 lint 门禁已纳入 `check`，并有门禁负向回归测试；具体范围见 [依赖决策](docs/dependency-decisions.md)。GitHub 分支保护仍待确认，不能把汇总 CI 检查等同于已强制执行的保护规则。运行时复用 Ajv、string-width、官方 OpenAI SDK 和独立 Pi TUI 模块，安装使用锁文件；不把零依赖当作目标。
-
-架构图见 `docs/architecture.png`，可编辑源文件为 `docs/architecture.dot`，矢量版本为 `docs/architecture.svg`。使用 Graphviz 重建：`dot -Tsvg docs/architecture.dot -o docs/architecture.svg`、`dot -Tpng docs/architecture.dot -o docs/architecture.png`。
-
-## 定位
-
-面向极客与开发者。公开 SDK 承载执行能力，CLI 不隐藏专属能力。配置、工具、模型与执行过程应可检查、可替换、可扩展。当前没有确定开源许可证，也没有发布 npm 包或部署服务。
-
-## SDK / CLI 安装包验证
-
-```sh
-npm run check
-npm run test:package
-npm run build
-npm pack --ignore-scripts
+const runtime = createDeveloperAgent({
+  model: createOpenAIModel({ apiKey: process.env.OPENAI_API_KEY, model: 'gpt-5.6-luna', reasoningEffort: 'low' }),
+  root: process.cwd(),
+  // 宿主明确授予能力；生产应用可以替换成自己的批准流程。
+  authorize: async () => true,
+});
+try {
+  const result = await runtime.agent.run('检查项目测试，定位并修复失败，然后重新验证。');
+  console.log(result);
+} finally {
+  await runtime.dispose();
+}
 ```
 
-`test:package` 在临时目录安装本地 tarball，验证真实包入口、TypeScript 消费者和 CLI 可执行链接；没有发布到 npm，也没有调用模型 API。测试根据仓库 lockfile 的运行时依赖图和打包产物的 integrity 构造消费者 lockfile，使用 `npm ci --offline --ignore-scripts` 安装并核对依赖版本，不需要 registry 元数据（packument）。依赖 tarball 需要先通过上面的 `npm ci --ignore-scripts` 缓存；这一步可联网，之后的测试不调用模型。CI 每次使用全新缓存，避免本地热缓存掩盖缺失依赖。也可以在 POSIX shell 中从空缓存复现：
+`createAgent` 接受任意实现通用契约的模型和工具，不依赖特定供应商、MCP 或 TUI。独立模块还包括 `pure-agent/session`、`pure-agent/tools/filesystem`、`pure-agent/tools/process`、`pure-agent/extensions/web`、`pure-agent/extensions/mcp`。
+
+## 检查与验收
 
 ```bash
-export npm_config_cache="$(mktemp -d)"
-export npm_config_registry=https://registry.npmjs.org
-npm ci --ignore-scripts
 npm run check
 npm run test:package
 ```
 
-CI 配置包含 Ubuntu 和 Windows（Node.js 24），两者均执行完整离线检查与安装包验收；实际支持以对应提交的 runner 结果为准。包测试使用带空格的临时目录，通过 npm 的平台 CLI shim 执行多词 prompt。Windows 的文件/目录符号链接测试需要启用开发者模式或具有创建符号链接权限；权限不足会明确失败，不会跳过安全断言。
+UT、IT、安装包 E2E 使用实际文件/子进程/本地协议服务和明确标注的模型测试夹具，不需要 API Key。真实模型运行须单独执行并保存脱敏证据；历史结果不代表当前所有能力已通过真实模型验收。
 
-安装本地 tarball 后，SDK 入口为 `pure-agent`，CLI 命令为 `pure-agent --demo`。npm 包仅包含编译后的 JS/类型声明、README、Markdown 文档和 SVG；完整源码 ZIP 另含测试、DOT 和 PNG。
+main 已设置分支保护：PR 合入、必需 `Offline acceptance gate`、禁止强推和删除，管理员也不可绕过。Windows/Ubuntu 的必需检查任一失败、取消或跳过，汇总门禁不会放行。独立交叉验收后由负责人决定合并。
 
-## 显式会话配置
+- [产品边界与验收要求](docs/product-boundaries.md)
+- [历史真实模型运行证据](docs/live-acceptance.md)
+- [参与贡献](CONTRIBUTING.md)
 
-真实模式可通过 `--config ./agent-config.json` 显式选择 JSON 配置；优先级为内置默认值 < 配置文件 < 显式 CLI 参数。配置不能包含密钥、替换端点或新增工具权限。字段、范围与失败行为见 [配置文档](docs/configuration.md)。
-
-## 真实模型与只读项目工具
-
-```sh
-node --use-env-proxy --env-file=.env.local src/cli.ts --openai --reasoning low
-```
-
-密钥仅放本地忽略文件或由宿主注入，不能提交。CLI 默认 GPT-5.6 Luna、low；SDK 通过 `pure-agent/providers/openai` 导入适配器。当前适配器使用官方 OpenAI Responses SDK 流式接口，不自行解析 SSE；交互式 TUI 增量更新同一个 Markdown 块，管道输出仍仅显示完整回复。中断的局部文本会标记为未保存，不写入会话历史。每次回复默认最多 1024 输出 token（包括 reasoning），每轮 Agent 最多 4 个模型步骤。
-
-当前 CLI 的真实模式只提供 `read_project_file`，允许 README、package.json、依赖决策和测试前基线四个指定文件；不提供任意文件读取、shell、写入或网络工具。SDK 已提供可显式注入的 `createWorkspaceFileTool`：由宿主指定根目录、精确文件白名单与读取上限，详见 [工作区只读工具](docs/workspace-file-tool.md)。它默认不注册，不自动扩大 CLI 能力，也不是安全沙箱。SDK 可注入其他工具，但宿主必须负责授权和隔离。`/create` 只修改当前 Agent 指令，不动态生成工具。
-
-模型续接数据作为 `providerData` 由适配器持有在消息中，核心仅复制保留；真实测试导出记录不包含它。`onUsage` 只回传数值用量，SDK 错误不回显请求头或密钥。
-
-手动付费检查：`examples/live-project-check.ts`。结果快照见 `docs/live-test-results.json`；完整本地调用轨迹位于忽略的 artifacts 目录，不提交到 Git。终端截图是成功调用轨迹的明确标记回放；云桌面 GUI 进程直接联网仍有执行环境问题。
-
-## 交互式 TUI
-
-交互式终端使用独立 Pi TUI 库实现底部编辑区、Markdown、滚动与命令补全；`Ctrl+O` 展开工具详情，`Esc` 取消执行，`Ctrl+C` 在空闲时退出。`/new` 重置会话，`/create` 设置指令。重定向和管道仍输出普通文本。参考过程与验证范围见 `docs/tui-reference-study.md`。
+这是持续开发中的产品。具体支持范围与限制以上述实现和对应版本验收为准，不把未实现或未验证能力标成已完成。

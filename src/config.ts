@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { Ajv } from 'ajv';
-import { PROJECT_SYSTEM } from './project-agent.ts';
+import { DEVELOPER_SYSTEM } from './developer-agent.ts';
 
 /** Session settings only: credentials, endpoints and capabilities are not configurable. */
 export interface AgentConfig {
@@ -12,11 +12,11 @@ export interface AgentConfig {
   readonly maxOutputTokens: number;
 }
 export const DEFAULT_CONFIG: Readonly<AgentConfig> = Object.freeze({
-  system: PROJECT_SYSTEM,
+  system: DEVELOPER_SYSTEM,
   model: 'gpt-5.6-luna',
   reasoning: 'low',
-  maxSteps: 4,
-  maxOutputTokens: 1024,
+  maxSteps: 64,
+  maxOutputTokens: 4096,
 });
 const fields = ['system', 'model', 'reasoning', 'maxSteps', 'maxOutputTokens'];
 const validate = new Ajv({ strict: true, coerceTypes: false, useDefaults: false, removeAdditional: false }).compile({
@@ -26,8 +26,8 @@ const validate = new Ajv({ strict: true, coerceTypes: false, useDefaults: false,
     system: { type: 'string', minLength: 1, maxLength: 16000, pattern: '\\S' },
     model: { type: 'string', minLength: 1, maxLength: 200, pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]*$' },
     reasoning: { type: 'string', enum: ['low', 'medium'] },
-    maxSteps: { type: 'integer', minimum: 1, maximum: 12 },
-    maxOutputTokens: { type: 'integer', minimum: 1, maximum: 2048 },
+    maxSteps: { type: 'integer', minimum: 1, maximum: 1000 },
+    maxOutputTokens: { type: 'integer', minimum: 1, maximum: 65536 },
   },
 });
 export class ConfigError extends Error {
