@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -182,13 +182,25 @@ test('timeout and cancellation terminate direct child, preserve terminal status,
   const timed = await invoke('exec_command', { command, timeoutMs: 100 });
   assert.equal(timed.terminationReason, 'timeout');
   assert.equal(timed.status, 'terminated');
-  assert.notEqual(timed.signal, null);
+  // taskkill reports a native exit code, not a POSIX signal, on Windows.
+  if (process.platform === 'win32') {
+    assert.equal(timed.signal, null);
+    assert.equal(typeof timed.exitCode, 'number');
+    assert.notEqual(timed.exitCode, 0);
+  } else assert.notEqual(timed.signal, null);
+  assert.ok(Number.isInteger(timed.pid) && (timed.pid as number) > 0);
+  assert.notEqual(timed.finishedAt, null);
+  assert.throws(() => process.kill(timed.pid as number, 0), { code: 'ESRCH' });
   const controller = new AbortController();
   const pending = invoke('exec_command', { command }, { signal: controller.signal });
   const timer = setTimeout(() => controller.abort(), 100);
   const aborted = await pending;
   clearTimeout(timer);
   assert.equal(aborted.terminationReason, 'cancelled');
+  assert.equal(aborted.status, 'terminated');
+  assert.ok(Number.isInteger(aborted.pid) && (aborted.pid as number) > 0);
+  assert.notEqual(aborted.finishedAt, null);
+  assert.throws(() => process.kill(aborted.pid as number, 0), { code: 'ESRCH' });
   assert.equal((await invoke('exec_command', { command: node('console.log("fresh")') })).output.trim(), 'fresh');
 });
 
@@ -305,10 +317,17 @@ test('host env is snapshotted; inherited credential names are removed unless exp
   }
 });
 
-test('artifacts cannot traverse workspace symlinks', { skip: process.platform === 'win32' }, async (t) => {
+test('artifacts cannot traverse workspace directory symlinks or Windows junctions', async (t) => {
   const { root, invoke } = await fixture(t);
-  await symlink(tmpdir(), join(root, 'artifacts'));
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'pure-process-outside-')));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(join(outside, 'sentinel.txt'), 'untouched');
+  // Directory junctions do not require Windows symlink privileges.
+  await symlink(outside, join(root, 'artifacts'), process.platform === 'win32' ? 'junction' : 'dir');
   await assert.rejects(invoke('exec_command', { command: 'echo never' }), /symlinks/);
+  assert.deepEqual(await readdir(outside), ['sentinel.txt']);
+  assert.equal(await readFile(join(outside, 'sentinel.txt'), 'utf8'), 'untouched');
+  assert.deepEqual((await invoke('process_status', {})).processes, []);
 });
 
 test('public tools validate direct SDK calls and configuration eagerly', async (t) => {

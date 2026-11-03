@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, stat, realpath } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { DEVELOPER_SYSTEM } from '../src/developer-agent.ts';
 import { spawnSync } from 'node:child_process';
@@ -27,7 +27,9 @@ async function fixture() {
   await mkdir(root);
   await writeFile(join(parent, 'outside.txt'), 'untouched');
   await writeFile(join(root, '.env'), 'SYNTHETIC_SECRET_NOT_READ');
-  return { parent, root, clean: () => rm(parent, { recursive: true, force: true }) };
+  // Keep the supplied path to exercise CLI canonicalization of Windows short-path aliases.
+  const canonicalRoot = await realpath(root);
+  return { parent, root, canonicalRoot, clean: () => rm(parent, { recursive: true, force: true }) };
 }
 function quiet(t: test.TestContext) {
   let output = '';
@@ -153,7 +155,7 @@ test('CLI creates a real project, observes failing tests, edits, verifies and re
       if (step === 3) {
         const result = lastResult(messages);
         assert.equal(result.exitCode, 1);
-        assert.equal(result.cwd, f.root);
+        assert.equal(result.cwd, f.canonicalRoot);
         assert.match(JSON.stringify(result), /AssertionError|ERR_ASSERTION/);
         return reply(
           call('search', 'grep', { pattern: 'a - b', glob: 'src/*.mjs', literal: true }),
