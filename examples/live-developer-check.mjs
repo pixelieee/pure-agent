@@ -13,10 +13,13 @@ if (!key?.trim()) {
   console.error('OPENAI_API_KEY is required; no API request was made.');
   process.exit(1);
 }
+const gitEnv = { ...process.env };
+delete gitEnv.OPENAI_API_KEY;
 let sourceTreeAtStart = null;
 try {
   sourceTreeAtStart = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
     cwd: base,
+    env: gitEnv,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],
   }).trim();
