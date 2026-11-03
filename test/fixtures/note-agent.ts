@@ -1,5 +1,5 @@
-import { createAgent } from './core.ts';
-import type { Model, Tool } from './core.ts';
+import { createAgent } from '../../src/core.ts';
+import type { Model, Tool } from '../../src/core.ts';
 
 /** This deterministic fixture exercises the real loop; it is NOT an AI model. */
 export const noteTool: Tool = {
@@ -23,7 +23,7 @@ export const noteTool: Tool = {
   },
 };
 
-export function createDemoModel(): Model {
+export function createTestModel(): Model {
   let sequence = 0;
   return {
     async complete(messages, _tools, signal) {
@@ -32,16 +32,16 @@ export function createDemoModel(): Model {
       if (last?.role === 'tool') {
         return {
           role: 'assistant',
-          content: `DEMO · Tool returned ${last.content}\nThis is a scripted fixture, not model reasoning.`,
+          content: `TEST ONLY · Tool returned ${last.content}\nThis is a scripted fixture, not model reasoning.`,
         };
       }
       const text = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
       return {
         role: 'assistant',
-        content: 'DEMO · Calling the note formatter through the agent loop.',
+        content: 'TEST ONLY · Calling the note formatter through the agent loop.',
         tool_calls: [
           {
-            id: `demo-${++sequence}`,
+            id: `test-${++sequence}`,
             type: 'function',
             function: { name: 'format_note', arguments: JSON.stringify({ text }) },
           },
@@ -52,6 +52,6 @@ export function createDemoModel(): Model {
 }
 
 export const DEFAULT_SYSTEM = 'You are a concise, helpful assistant.';
-export function createDemoAgent(system = DEFAULT_SYSTEM) {
-  return createAgent({ system, model: createDemoModel(), tools: [noteTool], maxSteps: 4 });
+export function createTestAgent(system = DEFAULT_SYSTEM) {
+  return createAgent({ system, model: createTestModel(), tools: [noteTool], maxSteps: 4 });
 }

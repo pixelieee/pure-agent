@@ -46,7 +46,7 @@ class ToolSummary implements Component {
     let target = '';
     try {
       const args = JSON.parse(this.args) as Record<string, unknown>;
-      const value = args.path ?? args.file ?? args.query;
+      const value = args.path ?? args.file ?? args.query ?? args.command ?? args.id;
       if (typeof value === 'string') target = `  ${safeText(value)}`;
     } catch {
       /* Tool payload remains available in details. */
@@ -55,14 +55,20 @@ class ToolSummary implements Component {
     if (this.result !== undefined) {
       try {
         const result: unknown = JSON.parse(this.result);
-        if (result && typeof result === 'object' && 'ok' in result && result.ok === false && 'error' in result) {
-          error = safeText(result.error).replace(/\n/g, ' ');
+        if (result && typeof result === 'object') {
+          if ('error' in result && result.error) error = safeText(result.error).replace(/\n/g, ' ');
+          else if ('exitCode' in result && typeof result.exitCode === 'number' && result.exitCode !== 0)
+            error = `exit ${result.exitCode}`;
+          else if ('terminationReason' in result && result.terminationReason)
+            error = safeText(result.terminationReason);
+          else if (('ok' in result && result.ok === false) || ('isError' in result && result.isError === true))
+            error = 'tool failed';
         }
       } catch {
         /* Non-JSON results remain neutral completed entries. */
       }
     }
-    const label = `${error !== undefined ? '!' : this.result === undefined ? '◌' : '·'} ${this.name}${target}${error !== undefined ? ` · ${error}` : ''}`;
+    const label = `${error !== undefined ? '!' : this.result === undefined ? '◌' : '·'} ${this.name}${error !== undefined ? ` · ${error}` : ''}${target}`;
     const lines = [truncateToWidth((error !== undefined ? deco.red : deco.muted)(`  ${label}`), width, '…')];
     if (this.expanded()) {
       const detail = new Text(
@@ -102,7 +108,7 @@ export class PureAgentTUI implements SessionView {
   private readonly mode: string;
   private readonly signalHandler = () => this.interrupt();
 
-  constructor(options: { terminal?: Terminal; modeLabel: string; note?: string }) {
+  constructor(options: { terminal?: Terminal; modeLabel: string; note?: string; workspace?: string }) {
     this.mode = safeText(options.modeLabel);
     this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, { mouse: false });
     this.editor = new Editor(
@@ -134,6 +140,14 @@ export class PureAgentTUI implements SessionView {
           ),
           shrink: 0,
         },
+        ...(options.workspace
+          ? [
+              {
+                component: new Line(() => deco.muted(` Workspace: ${safeText(options.workspace)} · ${this.mode}`)),
+                shrink: 0,
+              },
+            ]
+          : []),
         { component: scroll, grow: 1, basis: 0, minSize: 1 },
         {
           component: new Line(() =>
@@ -183,7 +197,7 @@ export class PureAgentTUI implements SessionView {
     this.started = true;
     process.on('SIGINT', this.signalHandler);
     this.tui.start();
-    this.tui.terminal.setTitle(this.mode.startsWith('REPLAY') ? 'Pure Agent · Replay' : 'Pure Agent');
+    this.tui.terminal.setTitle('Pure Agent');
     this.pulse = setInterval(() => {
       if (this.controller?.busy) {
         this.frame++;

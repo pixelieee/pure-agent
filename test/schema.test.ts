@@ -72,7 +72,7 @@ test('invalid schemas, unknown keywords, async and unresolved remote refs fail e
     { typo: true },
     { $async: true, type: 'object' },
     { $ref: 'https://example.invalid/schema' },
-    { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object' },
+    { $schema: 'http://json-schema.org/draft-04/schema#', type: 'object' },
   ]) {
     assert.throws(() =>
       createAgent({

@@ -8,6 +8,7 @@
       "test/**/*.mjs",
       "examples/**/*.ts",
       "examples/**/*.mjs",
+      "scripts/**/*.mjs",
       "*.json",
       "*.mjs",
       "*.ts",

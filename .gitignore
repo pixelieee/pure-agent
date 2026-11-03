@@ -10,3 +10,6 @@ artifacts/
 
 # Local private notes, credentials and raw inputs; never publish this directory.
 /.private/
+
+# Local developer-agent sessions and command logs can contain private workspace data.
+.pure-agent/

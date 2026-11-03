@@ -7,11 +7,12 @@ import type {
   ResponseOutputItem,
   ResponseCreateParamsStreaming,
   ResponseStreamEvent,
+  ResponseFunctionWebSearch,
 } from 'openai/resources/responses/responses';
 import type { Message, Model, ToolCall } from '../core.ts';
 
 type ProviderResponse = Pick<Response, 'output' | 'status' | 'usage' | 'error' | 'incomplete_details'>;
-/** Narrow transport seam; the adapter never executes tools. */
+/** Narrow transport seam; the adapter never executes local tools. Opted-in hosted tools run at OpenAI. */
 export interface OpenAIClient {
   responses: {
     create: (
@@ -32,24 +33,82 @@ export interface OpenAIUsage {
   cachedTokens: number;
   reasoningTokens: number;
 }
+export interface OpenAIWebCitation {
+  url: string;
+  title: string;
+  /** Offsets into the original output_text part, not the appended Sources display. */
+  startIndex: number;
+  endIndex: number;
+  messageId: string;
+  contentIndex: number;
+}
+export type OpenAIWebSearchEvent =
+  | { type: 'status'; id: string; status: 'in_progress' | 'searching' | 'completed' }
+  | { type: 'search'; call: ResponseFunctionWebSearch }
+  | { type: 'citation'; citation: OpenAIWebCitation };
 export interface OpenAIModelOptions {
   apiKey?: string;
   client?: OpenAIClient;
   model?: string;
   reasoningEffort?: 'low' | 'medium';
-  /** Positive integer, capped at 2048 (includes reasoning tokens). */
+  /** Positive integer from 1 through 65536, default 4096 (includes reasoning tokens). */
   maxCompletionTokens?: number;
+  /** Explicit opt-in to hosted web_search and API charges. Default false; at most 3 hosted calls per response. */
+  webSearch?: boolean;
+  /** Untrusted search metadata for presentation only. Observer errors cannot retry requests. */
+  onWebSearch?: (event: OpenAIWebSearchEvent) => void | Promise<void>;
   /** Numeric-only accounting, including rejected responses. Callback errors are isolated. */
   onUsage?: (usage: OpenAIUsage) => void | Promise<void>;
 }
 const fail = (code: string): Error => new Error(`OPENAI_${code}`);
 const nonempty = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 
+function safeWebURL(value: unknown): value is string {
+  if (!nonempty(value) || [...value].some((character) => character.charCodeAt(0) <= 32)) return false;
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+function validSearch(item: ResponseFunctionWebSearch): boolean {
+  const action = item.action;
+  if (!nonempty(item.id) || item.status !== 'completed' || !action || typeof action !== 'object') return false;
+  switch (action.type) {
+    case 'search':
+      return (
+        (action.query === undefined || typeof action.query === 'string') &&
+        (action.queries === undefined ||
+          (Array.isArray(action.queries) && action.queries.every((query) => typeof query === 'string'))) &&
+        (action.sources === undefined ||
+          (Array.isArray(action.sources) &&
+            action.sources.every((source) => source && source.type === 'url' && safeWebURL(source.url))))
+      );
+    case 'open_page':
+      return action.url == null || safeWebURL(action.url);
+    case 'find_in_page':
+      return safeWebURL(action.url) && typeof action.pattern === 'string';
+    default:
+      return false;
+  }
+}
+
 /** Accept only the output capabilities this adapter supports; preserve opaque reasoning. */
-function decodeOutput(output: unknown): { content: string | null; calls: ToolCall[]; output: ResponseOutputItem[] } {
+function decodeOutput(
+  output: unknown,
+  allowWebSearch = false,
+): {
+  content: string | null;
+  calls: ToolCall[];
+  output: ResponseOutputItem[];
+  webSearch: { calls: ResponseFunctionWebSearch[]; citations: OpenAIWebCitation[] };
+} {
   if (!Array.isArray(output) || !output.length) throw fail('INVALID_RESPONSE');
   const texts: string[] = [];
   const calls: ToolCall[] = [];
+  const searches: ResponseFunctionWebSearch[] = [];
+  const citations: OpenAIWebCitation[] = [];
   const ids = new Set<string>();
   for (const item of output) {
     if (!item || typeof item !== 'object') throw fail('INVALID_RESPONSE');
@@ -58,10 +117,32 @@ function decodeOutput(output: unknown): { content: string | null; calls: ToolCal
       case 'message':
         if (item.role !== 'assistant' || !nonempty(item.id) || !Array.isArray(item.content))
           throw fail('INVALID_RESPONSE');
-        for (const part of item.content) {
+        for (const [contentIndex, part] of item.content.entries()) {
           if (part?.type === 'refusal') throw fail('REFUSAL');
           if (part?.type !== 'output_text' || typeof part.text !== 'string') throw fail('INVALID_RESPONSE');
           texts.push(part.text);
+          if (part.annotations !== undefined && !Array.isArray(part.annotations)) throw fail('INVALID_RESPONSE');
+          for (const annotation of part.annotations ?? []) {
+            if (annotation?.type !== 'url_citation') continue;
+            if (
+              !safeWebURL(annotation.url) ||
+              typeof annotation.title !== 'string' ||
+              !Number.isSafeInteger(annotation.start_index) ||
+              !Number.isSafeInteger(annotation.end_index) ||
+              annotation.start_index < 0 ||
+              annotation.end_index < annotation.start_index ||
+              annotation.end_index > part.text.length
+            )
+              throw fail('INVALID_RESPONSE');
+            citations.push({
+              url: annotation.url,
+              title: annotation.title,
+              startIndex: annotation.start_index,
+              endIndex: annotation.end_index,
+              messageId: item.id,
+              contentIndex,
+            });
+          }
         }
         break;
       case 'function_call': {
@@ -83,6 +164,11 @@ function decodeOutput(output: unknown): { content: string | null; calls: ToolCal
         calls.push({ id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments } });
         break;
       }
+      case 'web_search_call':
+        if (!allowWebSearch) throw fail('UNSUPPORTED_OUTPUT');
+        if (!validSearch(item)) throw fail('INVALID_WEB_SEARCH');
+        searches.push(structuredClone(item));
+        break;
       case 'reasoning':
         if (
           !nonempty(item.id) ||
@@ -105,7 +191,12 @@ function decodeOutput(output: unknown): { content: string | null; calls: ToolCal
     }
   }
   if (!texts.length && !calls.length) throw fail('INVALID_RESPONSE');
-  return { content: texts.length ? texts.join('\n') : null, calls, output: structuredClone(output) };
+  let content = texts.length ? texts.join('\n') : null;
+  // Keep sources visible in clients that only render Message.content. Original
+  // output and citation offsets remain untouched for SDK continuation replay.
+  const urls = [...new Set(citations.map(({ url }) => url))];
+  if (content !== null && urls.length) content += `\n\nSources:\n${urls.map((url) => `- ${url}`).join('\n')}`;
+  return { content, calls, output: structuredClone(output), webSearch: { calls: searches, citations } };
 }
 
 function wireMessages(messages: Message[]): ResponseInputItem[] {
@@ -117,7 +208,7 @@ function wireMessages(messages: Message[]): ResponseInputItem[] {
     } else if (message.role === 'assistant' && message.providerData) {
       if (message.providerData.kind !== 'openai.responses') throw fail('INVALID_PROVIDER_DATA');
       const data = message.providerData.data as { output?: unknown } | null;
-      const decoded = decodeOutput(data?.output);
+      const decoded = decodeOutput(data?.output, true);
       if (
         decoded.content !== message.content ||
         JSON.stringify(decoded.calls) !== JSON.stringify(message.tool_calls ?? [])
@@ -145,11 +236,13 @@ function wireMessages(messages: Message[]): ResponseInputItem[] {
   return input;
 }
 
-function requestError(error: unknown, signal: AbortSignal): Error {
+function requestError(error: unknown, signal: AbortSignal, webSearch: boolean): Error {
   if (signal.aborted || error instanceof OpenAI.APIUserAbortError) return fail('ABORTED');
   if (error instanceof OpenAI.APIConnectionTimeoutError) return fail('TIMEOUT');
   if (error instanceof OpenAI.APIError) {
     if (error.status === 400) {
+      if (webSearch && typeof error.param === 'string' && /^tools(?:\[0\]|\.0)(?:\.type)?$/.test(error.param))
+        return fail('WEB_SEARCH_UNAVAILABLE');
       const params: Record<string, string> = {
         reasoning: 'REASONING',
         reasoning_effort: 'REASONING_EFFORT',
@@ -175,14 +268,18 @@ function requestError(error: unknown, signal: AbortSignal): Error {
 export function createOpenAIModel(options: OpenAIModelOptions): Model {
   const model = options.model ?? 'gpt-5.6-luna';
   const effort = options.reasoningEffort ?? 'low';
-  const maxTokens = options.maxCompletionTokens ?? 1024;
+  const maxTokens = options.maxCompletionTokens ?? 4096;
+  const webSearch = options.webSearch ?? false;
+  const onWebSearch = options.onWebSearch;
   const onUsage = options.onUsage;
   if (
     !nonempty(model) ||
     !model.trim() ||
     !Number.isSafeInteger(maxTokens) ||
     maxTokens < 1 ||
-    maxTokens > 2048 ||
+    maxTokens > 65536 ||
+    typeof webSearch !== 'boolean' ||
+    (onWebSearch !== undefined && typeof onWebSearch !== 'function') ||
     !['low', 'medium'].includes(effort) ||
     (onUsage !== undefined && typeof onUsage !== 'function')
   )
@@ -202,6 +299,13 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
   } catch {
     throw fail('INVALID_CONFIG');
   }
+  const emitWeb = async (event: OpenAIWebSearchEvent) => {
+    try {
+      await onWebSearch?.(structuredClone(event));
+    } catch {
+      /* Presentation cannot alter execution. */
+    }
+  };
   return {
     async complete(messages, tools, signal, onTextDelta) {
       if (signal.aborted) throw fail('ABORTED');
@@ -211,17 +315,23 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
         reasoning: { effort },
         max_output_tokens: maxTokens,
         store: false,
-        include: ['reasoning.encrypted_content'],
+        include: ['reasoning.encrypted_content', ...(webSearch ? ['web_search_call.action.sources' as const] : [])],
         stream: false,
-        ...(tools.length
+        ...(webSearch ? { max_tool_calls: 3 } : {}),
+        ...(tools.length || webSearch
           ? {
-              tools: tools.map(({ name, description, parameters }) => ({
-                type: 'function' as const,
-                name,
-                description,
-                parameters: structuredClone(parameters),
-                strict: false,
-              })),
+              tools: [
+                ...(webSearch
+                  ? [{ type: 'web_search' as const, user_location: { type: 'approximate' as const } }]
+                  : []),
+                ...tools.map(({ name, description, parameters }) => ({
+                  type: 'function' as const,
+                  name,
+                  description,
+                  parameters: structuredClone(parameters),
+                  strict: false,
+                })),
+              ],
             }
           : {}),
       };
@@ -232,7 +342,23 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
         if (onTextDelta && client.responses.stream) {
           for await (const event of client.responses.stream({ ...body, stream: true }, requestOptions)) {
             if (signal.aborted) break;
-            if (event.type === 'response.output_text.delta' && nonempty(event.delta)) {
+            if (
+              webSearch &&
+              (event.type === 'response.web_search_call.in_progress' ||
+                event.type === 'response.web_search_call.searching' ||
+                event.type === 'response.web_search_call.completed')
+            ) {
+              await emitWeb({
+                type: 'status',
+                id: event.item_id,
+                status:
+                  event.type === 'response.web_search_call.completed'
+                    ? 'completed'
+                    : event.type === 'response.web_search_call.searching'
+                      ? 'searching'
+                      : 'in_progress',
+              });
+            } else if (event.type === 'response.output_text.delta' && nonempty(event.delta)) {
               try {
                 await onTextDelta(event.delta);
               } catch {
@@ -252,7 +378,7 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
           }
         } else response = await client.responses.create(body, requestOptions);
       } catch (error) {
-        throw requestError(error, signal);
+        throw requestError(error, signal, webSearch);
       }
       if (onUsage && response?.usage) {
         const usage: OpenAIUsage = {
@@ -276,12 +402,23 @@ export function createOpenAIModel(options: OpenAIModelOptions): Model {
         throw fail(response.incomplete_details?.reason === 'max_output_tokens' ? 'TRUNCATED' : 'INCOMPLETE_RESPONSE');
       if (response?.status === 'failed' || response?.error) throw fail('RESPONSE_FAILED');
       if (response?.status !== 'completed') throw fail('INCOMPLETE_RESPONSE');
-      const decoded = decodeOutput(response.output);
+      const decoded = decodeOutput(response.output, webSearch);
+      for (const call of decoded.webSearch.calls) await emitWeb({ type: 'search', call });
+      for (const citation of decoded.webSearch.citations) await emitWeb({ type: 'citation', citation });
+      if (signal.aborted) throw fail('ABORTED');
       return {
         role: 'assistant',
         content: decoded.content,
         ...(decoded.calls.length ? { tool_calls: decoded.calls } : {}),
-        providerData: { kind: 'openai.responses', data: { output: decoded.output } },
+        providerData: {
+          kind: 'openai.responses',
+          data: {
+            output: decoded.output,
+            ...(decoded.webSearch.calls.length || decoded.webSearch.citations.length
+              ? { webSearch: decoded.webSearch }
+              : {}),
+          },
+        },
       };
     },
   };

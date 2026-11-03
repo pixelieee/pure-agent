@@ -45,7 +45,7 @@ test('default request is stateless low-reasoning Responses, bounded, no retries 
         model: 'gpt-5.6-luna',
         input: messages,
         reasoning: { effort: 'low' },
-        max_output_tokens: 1024,
+        max_output_tokens: 4096,
         stream: false,
         store: false,
         include: ['reasoning.encrypted_content'],
@@ -237,7 +237,7 @@ for (const [error, code] of [
 
 test('explicit key/config bounds', () => {
   assert.throws(() => createOpenAIModel({}), { message: 'OPENAI_MISSING_API_KEY' });
-  for (const maxCompletionTokens of [0, -1, 2049, 1.2, NaN])
+  for (const maxCompletionTokens of [0, -1, 65537, 1.2, NaN, Infinity])
     assert.throws(() => createOpenAIModel({ maxCompletionTokens, client: mock(async () => response()) }), {
       message: 'OPENAI_INVALID_CONFIG',
     });

@@ -21,6 +21,8 @@ npm run test:package
 
 第一步使用 `package-lock.json` 安装依赖并填充 npm 缓存，需要依赖源访问权限。`check` 先执行只读 Biome 格式与 lint 检查（`npm run quality`，警告也失败），再执行严格类型检查、离线测试和构建；`test:package` 在临时目录离线安装 tarball，验证 SDK 导入、类型声明和演示 CLI。缓存缺失时先重新执行依赖安装，不要把安装包测试改成实时模型调用。
 
+安装包验收只为 `npm ci --offline` 设置平台相关的基础设施超时：Windows 每次安装最多 180 秒，其他平台 60 秒，不自动重试。Windows CI 已观测到依赖解包超过 60 秒，而同一作业另一次全新安装用时 45.6 秒，主要耗时在含 4,000 多个文件的官方 OpenAI SDK 解包；[诊断记录](https://github.com/pixelieee/pure-agent/actions/runs/41566761850/job/125690052799)保留了各阶段计时。这不是安装速度或 SDK/CLI 性能承诺；离线、禁止生命周期脚本、独立 consumer、完整行为与类型断言仍然执行，超时或非零退出仍失败，CI 作业总上限仍为 15 分钟。其他命令和安全相关超时不变。
+
 CI 的“离线”指模型测试不访问真实模型服务，并非整个工作流断网：检出、Node 安装和依赖下载仍需要网络。CI 在 Ubuntu 与 Windows（Node.js 24）运行完整检查与安装包验收，包测试通过平台 CLI shim 启动。Windows 符号链接测试需要开发者模式或创建符号链接权限；权限不足应明确失败，不得跳过安全断言。已验证范围见 [README](README.md)。
 
 质量门禁使用锁定的 Biome 版本，覆盖 `src/`、`test/`、`examples/` 中的 TypeScript/MJS 与根目录配置；不扫描锁文件、生成物或私人文件。`quality` 分别检查三个源码目录，再检查完整配置范围（`.`），确保新增的根目录 TypeScript/MJS 等配置范围内文件也被覆盖：任一源码目录被全部排除时必须失败，不能仅扫描 Biome 配置自身后通过。部分文件模式排除仍须独立审阅配置，这不是防篡改保证。CI 不自动改写代码；本地格式修复可显式运行 `npx biome format --write .` 后审阅 diff。禁止用跳过检查、放宽目录范围或整文件 lint 禁用来制造通过。

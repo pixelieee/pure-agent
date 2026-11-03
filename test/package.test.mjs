@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { installOfflinePackage, npmDiagnosticLines, offlineInstallTimeout } from './package-install.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // npm supplies its JS entry when invoked through npm run test:package. Running
@@ -20,7 +21,7 @@ const run = (command, args, cwd) =>
     env: { ...process.env, NO_COLOR: '1', npm_config_update_notifier: 'false' },
   });
 
-test('private tarball installs as a JavaScript SDK and executable demo CLI', () => {
+test('private tarball installs as a JavaScript SDK and executable live-only CLI', (t) => {
   const consumer = mkdtempSync(join(tmpdir(), 'pure agent package-'));
   try {
     const [packed] = JSON.parse(npm(['pack', '--ignore-scripts', '--json', '--pack-destination', consumer], root));
@@ -52,7 +53,7 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
         dependencies,
         // Static script text; npm resolves the actual platform bin shim. Keep a
         // multiword prompt to verify argument quoting, not merely entry loading.
-        scripts: { 'smoke:cli': 'pure-agent --demo --prompt "Package smoke test"' },
+        scripts: { 'smoke:cli': 'pure --help', 'smoke:legacy-cli': 'pure-agent --help' },
       }),
     );
     // npm ci caches locked tarballs, not the registry packuments needed by an
@@ -80,7 +81,7 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
         },
       }),
     );
-    npm(['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], consumer);
+    installOfflinePackage(npmCli, consumer, (message) => t.diagnostic(message));
     const installed = JSON.parse(readFileSync(join(consumer, 'node_modules/pure-agent/package.json'), 'utf8'));
     assert.equal(installed.private, true);
     assert.deepEqual(installed.dependencies, manifest.dependencies);
@@ -125,8 +126,119 @@ test('private tarball installs as a JavaScript SDK and executable demo CLI', () 
       consumer,
     );
     const output = npm(['run', '--silent', 'smoke:cli'], consumer);
-    assert.match(output, /DEMO/);
-    assert.match(output, /Package smoke test/i);
+    assert.doesNotMatch(output, /--demo/);
+    assert.ok(!paths.includes('dist/demo.js'));
+    assert.ok(!paths.includes('dist/ui/replay.js'));
+    assert.ok(!paths.some((path) => path.startsWith('test/')));
+    assert.match(output, /--trust-workspace/);
+    assert.match(output, /--prompt/);
+    assert.equal(npm(['run', '--silent', 'smoke:legacy-cli'], consumer), output);
+  } finally {
+    rmSync(consumer, { recursive: true, force: true });
+  }
+});
+
+test('npm diagnostics expose phases but never raw configuration or URLs', () => {
+  assert.deepEqual(
+    npmDiagnosticLines(
+      [
+        '0 info using npm@11.19.1',
+        'npm timing reifyNode:node_modules/openai Completed in 123ms',
+        '42 silly idealTree buildDeps',
+        '43 error code ENOTCACHED',
+        '44 silly config secret=synthetic-private-marker',
+        'npm verbose argv "ci" "--token=synthetic-private-marker"',
+        '45 http fetch GET https://example.test/synthetic-private-marker',
+        '46 timing malicious phase synthetic-private-marker',
+        '47 timing https://user:synthetic-private-marker@example.test/path Completed in 123ms',
+        '48 timing reify:synthetic-private-marker Completed in 123ms',
+        '49 timing reifyNode:node_modules/unknown-private-marker Completed in 123ms',
+      ].join('\n'),
+      ['node_modules/openai'],
+    ),
+    [
+      'info using npm@11.19.1',
+      'timing reifyNode:node_modules/openai Completed in 123ms',
+      'silly idealTree buildDeps',
+      'error code ENOTCACHED',
+    ],
+  );
+});
+
+test('npm diagnostic collection preserves nonzero install failure and the offline flags', () => {
+  const consumer = mkdtempSync(join(tmpdir(), 'pure install diagnostics-'));
+  try {
+    const cli = join(consumer, 'fake-npm.cjs');
+    writeFileSync(
+      cli,
+      `
+      const assert = require('node:assert/strict');
+      assert.deepEqual(process.argv.slice(2, 7), ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund']);
+      process.stderr.write('npm timing idealTree Completed in 7ms\\n');
+      process.stderr.write('npm error code ETEST\\n');
+      process.stderr.write('npm error synthetic-private-marker\\n');
+      process.stdout.write('synthetic-private-marker');
+      process.exitCode = 7;
+    `,
+    );
+    writeFileSync(
+      join(consumer, 'package-lock.json'),
+      JSON.stringify({ packages: { '': {}, 'node_modules/test': {} } }),
+    );
+    const messages = [];
+    assert.throws(() => installOfflinePackage(cli, consumer, (message) => messages.push(message)), /status=7/);
+    assert.match(messages.join('\n'), /idealTree Completed in 7ms/);
+    const report = JSON.parse(messages[0].slice('Offline npm ci: '.length));
+    assert.equal(report.platform, process.platform);
+    assert.equal(report.timeoutMs, process.platform === 'win32' ? 180_000 : 60_000);
+    assert.match(messages.join('\n'), /Package manifests present: 0\/1/);
+    assert.doesNotMatch(messages.join('\n'), /synthetic-private-marker/);
+  } finally {
+    rmSync(consumer, { recursive: true, force: true });
+  }
+});
+
+test('offline install watchdog selects Windows only and defaults to the actual platform', () => {
+  assert.equal(offlineInstallTimeout('win32'), 180_000);
+  for (const platform of ['linux', 'darwin', 'freebsd', 'unknown']) {
+    assert.equal(offlineInstallTimeout(platform), 60_000);
+  }
+  assert.equal(offlineInstallTimeout(), process.platform === 'win32' ? 180_000 : 60_000);
+});
+
+test('offline install deadlines cannot disable or extend the platform watchdog', () => {
+  const limit = process.platform === 'win32' ? 180_000 : 60_000;
+  for (const timeout of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, limit + 1, '100']) {
+    assert.throws(
+      () => installOfflinePackage(npmCli, root, () => {}, timeout),
+      /Install deadline must be a positive integer within the platform watchdog/,
+    );
+  }
+});
+
+test('offline install expiration rejects and reaps a real started hung child', () => {
+  const consumer = mkdtempSync(join(tmpdir(), 'pure install timeout-'));
+  try {
+    const cli = join(consumer, 'hanging-npm.cjs');
+    writeFileSync(
+      cli,
+      `
+      require('node:fs').writeFileSync('ready.json', JSON.stringify({ pid: process.pid }));
+      setInterval(() => {}, 1000);
+    `,
+    );
+    writeFileSync(join(consumer, 'package-lock.json'), JSON.stringify({ packages: { '': {} } }));
+    const messages = [];
+    assert.throws(
+      () => installOfflinePackage(cli, consumer, (message) => messages.push(message), 2000),
+      /code=ETIMEDOUT/,
+    );
+    const { pid } = JSON.parse(readFileSync(join(consumer, 'ready.json'), 'utf8'));
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    const report = JSON.parse(messages[0].slice('Offline npm ci: '.length));
+    assert.equal(report.timeoutMs, 2000);
+    assert.equal(report.errorCode, 'ETIMEDOUT');
+    assert.equal(report.status, null);
   } finally {
     rmSync(consumer, { recursive: true, force: true });
   }

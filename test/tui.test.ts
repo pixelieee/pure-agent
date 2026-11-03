@@ -56,9 +56,9 @@ async function settle() {
 import { PureAgentTUI } from '../src/ui/tui.ts';
 import { SessionController } from '../src/ui/controller.ts';
 import { createAgent } from '../src/core.ts';
-import { createDemoAgent } from '../src/demo.ts';
+import { createTestAgent } from './fixtures/note-agent.ts';
 
-function setup(factory = createDemoAgent) {
+function setup(factory = createTestAgent) {
   const terminal = new HeadlessTerminal();
   const ui = new PureAgentTUI({ terminal, modeLabel: 'TEST · local fixture', note: 'No network or keys' });
   const controller = new SessionController(factory, ui, { defaultSystem: 'test instructions' });
@@ -308,7 +308,7 @@ test('terminal branding is set through the terminal adapter and cleared on exit'
     const terminal = new HeadlessTerminal();
     const ui = new PureAgentTUI({ terminal, modeLabel });
     ui.start();
-    assert.equal(terminal.title, modeLabel.startsWith('REPLAY') ? 'Pure Agent · Replay' : 'Pure Agent');
+    assert.equal(terminal.title, 'Pure Agent');
     ui.stop();
     assert.equal(terminal.title, 'Terminal');
   }
@@ -389,4 +389,26 @@ test('stream deltas respect manual scroll and sanitize split terminal controls',
   const bottom = screen();
   assert.match(bottom, /new tailred/);
   assert.doesNotMatch(bottom, /31mred/);
+});
+
+test('workspace and trust remain visible after reset and process failures are visible when collapsed', async (t) => {
+  const terminal = new HeadlessTerminal();
+  const ui = new PureAgentTUI({ terminal, modeLabel: 'OPENAI · READ-ONLY', workspace: '/project/example' });
+  const controller = new SessionController(createTestAgent, ui);
+  ui.attach(controller);
+  ui.start();
+  t.after(() => ui.stop());
+  await controller.submit('/new');
+  ui.event({ type: 'tool_start', name: 'exec_command', id: 'fail', args: { command: 'node --test' } });
+  ui.event({
+    type: 'tool_end',
+    name: 'exec_command',
+    id: 'fail',
+    result: JSON.stringify({ exitCode: 1, stdout: 'failed', stderr: '' }),
+  });
+  ui.tui.renderNow();
+  const screen = ui.tui.getScreenLines().map(safeText).join('\n');
+  assert.match(screen, /Workspace: \/project\/example/);
+  assert.match(screen, /READ-ONLY/);
+  assert.match(screen, /exec_command · exit 1/);
 });

@@ -45,7 +45,7 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Typecheck, offline tests, and build
         run: npm run check
-      - name: Verify installed SDK and demo CLI from tarball
+      - name: Verify installed SDK and live-only CLI from tarball
         run: npm run test:package
 
   acceptance-gate:
