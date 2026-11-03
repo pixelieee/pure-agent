@@ -412,3 +412,34 @@ test('workspace and trust remain visible after reset and process failures are vi
   assert.match(screen, /READ-ONLY/);
   assert.match(screen, /exec_command · exit 1/);
 });
+
+test('restored tools stay completed, expand to recorded details, and do not leave a running status', async (t) => {
+  const { terminal, ui, controller, screen } = setup();
+  t.after(() => ui.stop());
+  controller.showHistory(
+    {
+      version: 1,
+      messages: [
+        { role: 'user', content: 'Earlier request' },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id: 'old', type: 'function', function: { name: 'read', arguments: '{"path":"lost.txt"}' } }],
+        },
+        { role: 'tool', tool_call_id: 'old', content: '{"ok":false,"error":"missing"}' },
+        { role: 'assistant', content: 'Earlier answer' },
+      ],
+    },
+    'old.json',
+  );
+  let visible = screen();
+  assert.match(visible, /Earlier request/);
+  assert.match(visible, /read · missing/);
+  assert.match(visible, /Earlier answer/);
+  assert.match(visible, /ready · restored session/);
+  assert.doesNotMatch(visible, /running read/);
+  terminal.send('\x0f');
+  visible = screen();
+  assert.match(visible, /lost.txt/);
+  assert.match(visible, /missing/);
+});

@@ -345,6 +345,7 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
     configurationNote: 'Current tools and workspace permissions are unchanged. Previous session files are unchanged.',
   });
   if (view instanceof TerminalView) view.welcome(note);
+  if (initialSnapshot && sessionPath !== undefined) controller.showHistory(initialSnapshot, sessionPath);
   try {
     if (prompt !== undefined) {
       const interrupt = () => controller.interrupt();

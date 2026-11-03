@@ -407,6 +407,7 @@ test('custom instructions survive create/save/new/resume and cold CLI resume wit
     assert.equal(await main(['--read-only', '--cwd', f.root], { env, modelFactory }), 0, output());
     assert.deepEqual(seen, [expected]);
     assert.match(output(), /Session resumed:/);
+    const beforeColdResume = output().length;
     assert.equal(
       await main(['--read-only', '--cwd', f.root, '--resume', 'custom.json', '--prompt', 'cold followup'], {
         env,
@@ -416,6 +417,10 @@ test('custom instructions survive create/save/new/resume and cold CLI resume wit
       output(),
     );
     assert.deepEqual(seen, [expected, expected]);
+    const coldOutput = output().slice(beforeColdResume);
+    assert.match(coldOutput, /\[USER\] first request/);
+    assert.match(coldOutput, /\[AGENT\] Hecho\./);
+    assert.match(coldOutput, /Session resumed: custom.json/);
     const path = join(f.root, 'custom.json');
     const saved = JSON.parse(await readFile(path, 'utf8'));
     assert.equal(saved.snapshot.messages[0].content, expected);
