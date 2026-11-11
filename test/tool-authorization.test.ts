@@ -96,6 +96,65 @@ test('policy sees detached args and the original extension tool name', async (t)
   assert.deepEqual(await readdir(root), ['original']);
 });
 
+test('registration retains authorization identity and implementation after caller mutation', async (t) => {
+  const { root, tool } = await fixture(t);
+  const write = tool('write');
+  const extension = {
+    ...write,
+    name: 'registered_write',
+    async execute(args: unknown, ctx: { signal: AbortSignal }) {
+      assert.strictEqual(this, extension, 'original method receiver is preserved');
+      return write.execute(args, ctx);
+    },
+  };
+  const registered = authorizeTool(extension, root, ({ name }) => name === 'registered_write');
+  const denied = authorizeTool(extension, root, () => false);
+  extension.name = 'replacement_write';
+  extension.execute = async () => {
+    await writeFile(join(root, 'replacement-effect'), 'must not execute');
+  };
+  await registered.execute({ path: 'original-effect', content: 'registered implementation' }, context());
+  await assert.rejects(
+    denied.execute({ path: 'denied-effect', content: 'must not execute' }, context()),
+    /Permission denied for registered_write\./,
+  );
+  assert.equal(registered.name, 'registered_write');
+  assert.equal(await readFile(join(root, 'original-effect'), 'utf8'), 'registered implementation');
+  assert.deepEqual(await readdir(root), ['original-effect']);
+});
+
+test('prototype and non-enumerable implementations retain their original receiver', async (t) => {
+  const { root, tool } = await fixture(t);
+  const write = tool('write');
+  class FileExtension {
+    name = 'class_write';
+    description = write.description;
+    parameters = write.parameters;
+    async execute(args: unknown, ctx: { signal: AbortSignal }) {
+      assert.strictEqual(this, extension);
+      return write.execute(args, ctx);
+    }
+  }
+  const extension = new FileExtension();
+  const prototypeRegistered = authorizeTool(extension, root);
+  Object.defineProperty(extension, 'execute', { value: extension.execute, enumerable: false });
+  const hiddenRegistered = authorizeTool(extension, root, ({ name }) => name === 'class_write');
+  await prototypeRegistered.execute({ path: 'prototype', content: 'real prototype method' }, context());
+  await hiddenRegistered.execute({ path: 'hidden', content: 'real hidden method' }, context());
+  assert.equal(await readFile(join(root, 'prototype'), 'utf8'), 'real prototype method');
+  assert.equal(await readFile(join(root, 'hidden'), 'utf8'), 'real hidden method');
+  let reads = 0;
+  const accessorTool = {
+    ...write,
+    get execute() {
+      reads++;
+      return extension.execute;
+    },
+  };
+  authorizeTool(accessorTool, root);
+  assert.equal(reads, 1, 'registration reads an enumerable execute accessor exactly once');
+});
+
 test('pre-abort, pending approval abort and abort during approval prevent effects', async (t) => {
   const { root, tool } = await fixture(t);
   const args = { path: 'file', content: 'bad' };

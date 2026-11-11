@@ -31,21 +31,26 @@ async function authorized(decision: () => boolean | Promise<boolean>, signal: Ab
 
 /** Internal boundary shared by every runtime tool, including application extensions. */
 export function authorizeTool(tool: Tool, root: string, authorize?: DeveloperAgentOptions['authorize']): Tool {
+  const { execute: implementation, ...registered } = tool;
+  const name = registered.name;
+  // Preserve the original receiver, not replaceable name/execute properties.
+  // Mutable state read through this or a closure remains owned by the host.
+  const execute = implementation.bind(tool);
   return {
-    ...tool,
+    ...registered,
     async execute(args: unknown, context) {
       context.signal.throwIfAborted();
       if (
         authorize &&
         !(await authorized(
-          () => authorize({ name: tool.name, args: structuredClone(args), workspaceRoot: root }, context),
+          () => authorize({ name, args: structuredClone(args), workspaceRoot: root }, context),
           context.signal,
         ))
       ) {
-        throw new Error(`Permission denied for ${tool.name}. The host must authorize this capability.`);
+        throw new Error(`Permission denied for ${name}. The host must authorize this capability.`);
       }
       context.signal.throwIfAborted();
-      return tool.execute(args, context);
+      return execute(args, context);
     },
   };
 }
