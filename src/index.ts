@@ -10,6 +10,9 @@ export type {
   Tool,
   ToolDefinition,
   ToolCall,
+  ToolCallContext,
+  AfterToolCallContext,
+  ToolHooks,
 } from './core.ts';
 export { createWorkspaceFileTool } from './workspace-file-tool.ts';
 export type { WorkspaceFileToolOptions } from './workspace-file-tool.ts';

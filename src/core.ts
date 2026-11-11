@@ -1,4 +1,4 @@
-import { executeToolCalls, registerTools, validateToolConcurrency } from './tool-execution.ts';
+import { executeToolCalls, registerTools, validateToolConcurrency, validateToolHooks } from './tool-execution.ts';
 
 /** One agent, one session, one bounded model/tool loop. No built-in capabilities. */
 export interface ToolCall {
@@ -27,6 +27,30 @@ export interface Tool extends ToolDefinition {
   // biome-ignore lint/suspicious/noExplicitAny: Agent invokes heterogeneous callbacks after JSON Schema and optional domain validation; direct callers own validation.
   execute: (args: any, ctx: { signal: AbortSignal }) => Promise<unknown>;
 }
+/** Detached metadata. Mutating it never rewrites the validated invocation. */
+export interface ToolCallContext {
+  id: string;
+  name: string;
+  args: unknown;
+}
+export interface AfterToolCallContext extends ToolCallContext {
+  /** JSON-normalized result, including the error payload for a thrown invocation. */
+  result: unknown;
+  /** Describes execute(), not whether external side effects occurred. */
+  outcome: 'returned' | 'threw' | 'serialization_error';
+}
+export interface ToolHooks {
+  /** Runs after validation, before execute (and runtime authorization). Cannot grant permission. */
+  beforeToolCall?: (
+    call: ToolCallContext,
+    context: { signal: AbortSignal },
+  ) => void | { block: true; reason?: string } | Promise<{ block: true; reason?: string } | undefined> | Promise<void>;
+  /** Runs after execute settles, even on abort. A replacement changes only the model-facing result. */
+  afterToolCall?: (
+    call: AfterToolCallContext,
+    context: { signal: AbortSignal },
+  ) => void | { result: unknown } | Promise<{ result: unknown } | undefined> | Promise<void>;
+}
 export interface Model {
   complete: (
     messages: Message[],
@@ -41,7 +65,7 @@ export type AgentEvent =
   | { type: 'assistant_delta'; text: string; step: number }
   | { type: 'assistant'; text: string; step: number }
   | { type: 'tool_start'; name: string; id: string; args: unknown }
-  | { type: 'tool_end'; name: string; id: string; result: string }
+  | { type: 'tool_end'; name: string; id: string; result: string; hookError?: string }
   | ({ type: 'done' } & RunResult);
 export interface RunResult {
   status: 'completed' | 'blocked' | 'cancelled' | 'limit';
@@ -65,7 +89,7 @@ export type ContextProjector = (
   context: { signal: AbortSignal; step: number },
 ) => Message[] | Promise<Message[]>;
 
-export interface AgentOptions {
+export interface AgentOptions extends ToolHooks {
   model: Model;
   system?: string;
   tools?: Tool[];
@@ -235,8 +259,12 @@ export function createAgent({
   maxSteps = 12,
   maxToolConcurrency = 1,
   projectContext,
+  beforeToolCall,
+  afterToolCall,
 }: AgentOptions) {
   validateToolConcurrency(maxToolConcurrency);
+  const hooks = { beforeToolCall, afterToolCall };
+  validateToolHooks(hooks);
   if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) throw new Error('maxSteps must be a positive safe integer');
   if (!model || typeof model.complete !== 'function') throw new Error('A model.complete function is required');
   if (projectContext !== undefined && typeof projectContext !== 'function')
@@ -336,7 +364,7 @@ export function createAgent({
             await emit({ type: 'assistant', text, step: steps });
             if (!calls.length) return await done(signal.aborted ? 'cancelled' : 'completed');
             // Execution events follow completion; retained results always follow model order.
-            const results = await executeToolCalls(calls, registry, signal, emit, maxToolConcurrency);
+            const results = await executeToolCalls(calls, registry, signal, emit, maxToolConcurrency, hooks);
             for (const [index, call] of calls.entries()) {
               history.push({ role: 'tool', tool_call_id: call.id, content: results[index] as string });
             }

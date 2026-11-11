@@ -3,10 +3,11 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import type { AgentEvent, Tool, ToolCall } from '../src/core.ts';
+import type { AgentEvent, Tool, ToolCall, ToolHooks } from '../src/core.ts';
 import { validateAgentSnapshot } from '../src/core.ts';
 import { authorizeTool } from '../src/tool-authorization.ts';
 import { executeToolCalls, registerTools, validateToolConcurrency } from '../src/tool-execution.ts';
+import { createProcessTools } from '../src/tools/process.ts';
 import { createFileTools } from '../src/tools/filesystem.ts';
 
 const parameters = {
@@ -372,6 +373,494 @@ test('runtime supports prototype and non-enumerable execute methods with origina
       );
     }
     assert.deepEqual((await readdir(root)).sort(), ['non-enumerable', 'prototype']);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Hooks exercise the production runner, with real filesystem effects and no model.
+test('hooks validate first, veto without start, detach inputs and transform completed results', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hooks-'));
+  const events: AgentEvent[] = [];
+  const before: string[] = [];
+  const after: string[] = [];
+  const tool: Tool = {
+    name: 'file',
+    description: 'Write',
+    parameters,
+    async execute(args: { path: string }) {
+      await writeFile(join(root, args.path), args.path);
+      args.path = 'tool mutation';
+      return { stored: true };
+    },
+  };
+  try {
+    const invalid = call('invalid');
+    invalid.function.arguments = '{}';
+    const results = await executeToolCalls(
+      [invalid, call('blocked'), call('allowed')],
+      registerTools([tool]),
+      new AbortController().signal,
+      async (event) => {
+        events.push(event);
+      },
+      1,
+      {
+        beforeToolCall(input) {
+          before.push(input.id);
+          (input.args as { path: string }).path = 'hook mutation';
+          if (input.id === 'blocked') return { block: true, reason: 'Host veto' };
+          return undefined;
+        },
+        afterToolCall(input) {
+          after.push(input.id);
+          assert.equal(input.outcome, 'returned');
+          assert.deepEqual(input.args, { path: 'allowed' });
+          assert.deepEqual(input.result, { stored: true });
+          return { result: { summary: 'Stored' } };
+        },
+      },
+    );
+    assert.deepEqual(before, ['blocked', 'allowed']);
+    assert.deepEqual(after, ['allowed']);
+    assert.match(results[1] ?? '', /Host veto/);
+    assert.deepEqual(JSON.parse(results[2] ?? ''), { summary: 'Stored' });
+    assert.deepEqual(await readdir(root), ['allowed']);
+    assert.deepEqual(
+      events.filter((e) => e.type === 'tool_start').map((e) => e.id),
+      ['allowed'],
+    );
+    assert.equal(events.filter((e) => e.type === 'tool_end').length, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('after hook failure preserves real writes and original success/error/serialization outcomes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hooks-'));
+  const outcomes: string[] = [];
+  const events: AgentEvent[] = [];
+  const tool: Tool = {
+    name: 'file',
+    description: 'Write then return or throw',
+    parameters,
+    async execute({ path }: { path: string }) {
+      await writeFile(join(root, path), 'executed once');
+      if (path === 'throw') throw new Error('Failed after write');
+      if (path === 'circular') {
+        const result: { self?: unknown } = {};
+        result.self = result;
+        return result;
+      }
+      return { saved: path };
+    },
+  };
+  try {
+    const results = await executeToolCalls(
+      ['success', 'throw', 'circular'].map((id) => call(id)),
+      registerTools([tool]),
+      new AbortController().signal,
+      async (event) => {
+        events.push(event);
+      },
+      2,
+      {
+        afterToolCall(input) {
+          outcomes.push(input.outcome);
+          if (input.result && typeof input.result === 'object') Object.assign(input.result, { corrupted: true });
+          throw new Error('Audit unavailable');
+        },
+      },
+    );
+    assert.deepEqual(outcomes, ['returned', 'threw', 'serialization_error']);
+    assert.deepEqual(JSON.parse(results[0] ?? ''), { saved: 'success' });
+    assert.match(results[1] ?? '', /Failed after write/);
+    assert.match(results[2] ?? '', /circular/i);
+    assert.deepEqual((await readdir(root)).sort(), ['circular', 'success', 'throw']);
+    for (const event of events) if (event.type === 'tool_end') assert.equal(event.hookError, 'afterToolCall failed');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('before hook errors and malformed decisions fail closed; malformed replacements preserve result', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hooks-'));
+  const tool: Tool = {
+    name: 'file',
+    description: 'Write',
+    parameters,
+    async execute({ path }: { path: string }) {
+      await writeFile(join(root, path), 'done');
+      return 'done';
+    },
+  };
+  try {
+    for (const beforeToolCall of [
+      () => {
+        throw new Error('Preflight failed');
+      },
+      () => false,
+    ]) {
+      const result = await executeToolCalls(
+        [call('blocked')],
+        registerTools([tool]),
+        new AbortController().signal,
+        async () => {},
+        1,
+        {
+          // @ts-expect-error Deliberate invalid JavaScript hook contract.
+          beforeToolCall,
+        },
+      );
+      assert.equal(JSON.parse(result[0] ?? '').ok, false);
+      assert.deepEqual(await readdir(root), []);
+    }
+    const events: AgentEvent[] = [];
+    const result = await executeToolCalls(
+      [call('written')],
+      registerTools([tool]),
+      new AbortController().signal,
+      async (event) => {
+        events.push(event);
+      },
+      1,
+      { afterToolCall: () => ({ result: 1n }) },
+    );
+    assert.equal(result[0], '"done"');
+    assert.equal(await readFile(join(root, 'written'), 'utf8'), 'done');
+    assert.ok(events.some((e) => e.type === 'tool_end' && e.hookError));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('parallel hooks occupy bounded slots, drain after abort and retain ordered pairing', {
+  timeout: 5000,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hooks-'));
+  const controller = new AbortController();
+  const started = gate();
+  const release = gate();
+  const before: string[] = [];
+  const after: string[] = [];
+  let settled = false;
+  const tool: Tool = {
+    name: 'file',
+    description: 'Write',
+    parameters,
+    parallelSafe: true,
+    async execute({ path }: { path: string }) {
+      await writeFile(join(root, path), 'done');
+      return path;
+    },
+  };
+  try {
+    const pending = executeToolCalls(
+      [call('0'), call('1'), call('2')],
+      registerTools([tool]),
+      controller.signal,
+      async () => {},
+      2,
+      {
+        beforeToolCall(input) {
+          before.push(input.id);
+        },
+        async afterToolCall(input, { signal }) {
+          after.push(input.id);
+          if (after.length === 2) started.resolve();
+          await release.promise;
+          assert.equal(signal.aborted, true);
+          return { result: { saved: input.result } };
+        },
+      },
+    ).then((results) => {
+      settled = true;
+      return results;
+    });
+    await started.promise;
+    assert.deepEqual(before, ['0', '1']);
+    controller.abort();
+    assert.equal(settled, false);
+    release.resolve();
+    const results = await pending;
+    assert.deepEqual(
+      results.slice(0, 2).map((r) => JSON.parse(r)),
+      [{ saved: '0' }, { saved: '1' }],
+    );
+    assert.match(results[2] ?? '', /Cancelled before execution/);
+    assert.deepEqual((await readdir(root)).sort(), ['0', '1']);
+  } finally {
+    release.resolve();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('abort during before hook drains hook but does not start the tool', { timeout: 5000 }, async () => {
+  const controller = new AbortController();
+  const entered = gate();
+  const release = gate();
+  const events: AgentEvent[] = [];
+  const tool: Tool = {
+    name: 'file',
+    description: 'Must not run',
+    parameters,
+    async execute() {
+      assert.fail('Cancelled invocation executed');
+    },
+  };
+  const pending = executeToolCalls(
+    [call('0')],
+    registerTools([tool]),
+    controller.signal,
+    async (event) => {
+      events.push(event);
+    },
+    1,
+    {
+      async beforeToolCall() {
+        entered.resolve();
+        await release.promise;
+      },
+      afterToolCall() {
+        assert.fail('Unexecuted tool reached after hook');
+      },
+    },
+  );
+  await entered.promise;
+  controller.abort();
+  release.resolve();
+  assert.match((await pending)[0] ?? '', /Cancelled before execution/);
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['tool_end'],
+  );
+});
+
+test('hooks cannot bypass runtime authorization or filesystem containment; process effects survive after failure', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hooks-real-'));
+  const processes = createProcessTools({ root, inheritEnv: false });
+  const trace: string[] = [];
+  try {
+    const denied = authorizeTool(processes.tools[0] as Tool, root, () => {
+      trace.push('authorize');
+      return false;
+    });
+    const command: ToolCall = {
+      id: 'command',
+      type: 'function',
+      function: {
+        name: 'exec_command',
+        arguments: JSON.stringify({ command: 'printf done > effect.txt' }),
+      },
+    };
+    const hooks = {
+      beforeToolCall() {
+        trace.push('before');
+      },
+      afterToolCall() {
+        trace.push('after');
+        throw new Error('private hook details');
+      },
+    };
+    const result = await executeToolCalls(
+      [command],
+      registerTools([denied]),
+      new AbortController().signal,
+      async () => {},
+      1,
+      hooks,
+    );
+    assert.match(result[0] ?? '', /Permission denied/);
+    assert.deepEqual(trace, ['before', 'authorize', 'after']);
+    assert.ok(!(await readdir(root)).includes('effect.txt'));
+    const allowed = authorizeTool(processes.tools[0] as Tool, root, () => true);
+    const executed = await executeToolCalls(
+      [command],
+      registerTools([allowed]),
+      new AbortController().signal,
+      async () => {},
+      1,
+      hooks,
+    );
+    assert.equal(JSON.parse(executed[0] ?? '').exitCode, 0);
+    assert.equal(await readFile(join(root, 'effect.txt'), 'utf8'), 'done');
+    const escaped: ToolCall = {
+      id: 'escape',
+      type: 'function',
+      function: {
+        name: 'read',
+        arguments: JSON.stringify({ path: '../outside' }),
+      },
+    };
+    const rejected = await executeToolCalls(
+      [escaped],
+      registerTools(createFileTools({ root })),
+      new AbortController().signal,
+      async () => {},
+      1,
+      { beforeToolCall() {} },
+    );
+    assert.equal(JSON.parse(rejected[0] ?? '').ok, false);
+    assert.match(rejected[0] ?? '', /outside|escape/i);
+  } finally {
+    await processes.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('hook configuration is checked and callback references are captured before scheduling', async () => {
+  const entered = gate();
+  const release = gate();
+  const controller = new AbortController();
+  let seen = 0;
+  const hooks = {
+    async beforeToolCall() {
+      seen++;
+      entered.resolve();
+      await release.promise;
+      return { block: true as const };
+    },
+  };
+  const tool: Tool = {
+    name: 'file',
+    description: 'Never enters after veto',
+    parameters,
+    async execute() {
+      assert.fail('Vetoed tool ran');
+    },
+  };
+  await assert.rejects(
+    executeToolCalls(
+      [],
+      registerTools([]),
+      controller.signal,
+      async () => {},
+      1,
+      // @ts-expect-error Invalid JavaScript configuration must fail before scheduling.
+      { afterToolCall: true },
+    ),
+    /afterToolCall must be a function/,
+  );
+  const pending = executeToolCalls(
+    [call('0'), call('1')],
+    registerTools([tool]),
+    controller.signal,
+    async () => {},
+    1,
+    hooks,
+  );
+  await entered.promise;
+  hooks.beforeToolCall = async () => {
+    assert.fail('Replacement callback used');
+  };
+  release.resolve();
+  await pending;
+  assert.equal(seen, 2);
+});
+
+test('before hook exceptions never expose arbitrary exception text', async () => {
+  const sentinel = 'TEST_ONLY_PRIVATE_HOOK_SENTINEL';
+  const tool: Tool = {
+    name: 'file',
+    description: 'Must not execute',
+    parameters,
+    async execute() {
+      assert.fail('Failed hook allowed execution');
+    },
+  };
+  const hooks: ToolHooks[] = [
+    {
+      beforeToolCall() {
+        throw new Error(sentinel);
+      },
+    },
+    {
+      async beforeToolCall() {
+        throw sentinel;
+      },
+    },
+    {
+      beforeToolCall() {
+        return {
+          block: true,
+          get reason(): string {
+            throw new Error(sentinel);
+          },
+        };
+      },
+    },
+  ];
+  for (const hook of hooks) {
+    const events: AgentEvent[] = [];
+    const result = await executeToolCalls(
+      [call('0')],
+      registerTools([tool]),
+      new AbortController().signal,
+      async (event) => {
+        events.push(event);
+      },
+      1,
+      hook,
+    );
+    assert.deepEqual(
+      result.map((value) => JSON.parse(value)),
+      [{ ok: false, error: 'beforeToolCall failed' }],
+    );
+    assert.ok(!JSON.stringify(events).includes(sentinel));
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ['tool_end'],
+    );
+  }
+});
+
+test('hooks cannot overwrite captured callbacks through their receiver', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-hook-receiver-'));
+  const seen: string[] = [];
+  const receivers: unknown[] = [];
+  const hooks: ToolHooks = {
+    beforeToolCall(this: ToolHooks | undefined, input) {
+      receivers.push(this);
+      if (this)
+        this.afterToolCall = () => {
+          assert.fail('Receiver replaced after callback');
+        };
+      seen.push(`before:${input.id}`);
+    },
+    afterToolCall(this: ToolHooks | undefined, input) {
+      receivers.push(this);
+      if (this)
+        this.beforeToolCall = () => {
+          assert.fail('Receiver replaced before callback');
+        };
+      seen.push(`after:${input.id}`);
+    },
+  };
+  const tool: Tool = {
+    name: 'file',
+    description: 'Write real files',
+    parameters,
+    async execute({ path }: { path: string }) {
+      await writeFile(join(root, path), 'done');
+      return path;
+    },
+  };
+  try {
+    const result = await executeToolCalls(
+      [call('0'), call('1')],
+      registerTools([tool]),
+      new AbortController().signal,
+      async () => {},
+      1,
+      hooks,
+    );
+    assert.deepEqual(
+      result.map((value) => JSON.parse(value)),
+      ['0', '1'],
+    );
+    assert.deepEqual(seen, ['before:0', 'after:0', 'before:1', 'after:1']);
+    assert.deepEqual(receivers, [undefined, undefined, undefined, undefined]);
+    assert.deepEqual((await readdir(root)).sort(), ['0', '1']);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

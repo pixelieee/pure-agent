@@ -15,3 +15,5 @@
 源码阅读：[Pi e8504df 的 agent-loop.ts](https://github.com/earendil-works/pi/blob/e8504dfab5fb3aa023322a7e89b43c0eb49e6120/packages/agent/src/agent-loop.ts)，文件 blob `cfc9401e5581847f6d5a9bb1815ab0f0e663f2e5`。该版本支持显式串行覆盖和 `Promise.all` 并行，结果消息按调用顺序组织，工具执行没有自动重试。本实现采用有界、显式安全声明和局部串行屏障，未复制 Pi 源码，也未声称完全对齐其协议。
 
 `test/tool-execution.test.ts` 直接调用生产工具执行边界，以真实临时文件及受控同步验证并发上限、乱序结束/有序结果、串行屏障、默认顺序、取消等待、错误隔离及真实内建文件工具。它不伪造模型或 HTTP 响应。组件检查不等于模型循环 E2E；真实 API 集成仍等待安全凭据导入与独立验收。Hooks、恢复框架、自动重试与 CLI 配置不在此变更中。
+
+工具前后控制接口及其并发责任见 [工具生命周期 hooks](tool-hooks.md)。`parallelSafe` 的宿主承诺也覆盖这些 hooks。
