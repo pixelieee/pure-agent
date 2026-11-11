@@ -159,12 +159,13 @@ test('independent runtime: explicit default instructions are not appended a seco
   assert.deepEqual(runtime.agent.messages, [{ role: 'system', content: DEVELOPER_SYSTEM }]);
 });
 
-test('omitting SDK authorization denies local and custom tool calls without side effects', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'pure-runtime-default-deny-'));
+test('explicit deny policy blocks local and custom tool calls without side effects', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-runtime-explicit-deny-'));
   let customCalls = 0;
   let step = 0;
   const runtime = createDeveloperAgent({
     root,
+    authorize: () => false,
     tools: [
       {
         name: 'custom_effect',
@@ -216,7 +217,7 @@ test('omitting SDK authorization denies local and custom tool calls without side
     await runtime.dispose();
     await rm(root, { recursive: true, force: true });
   });
-  assert.equal((await runtime.agent.run('Attempt all tools without authorization')).status, 'completed');
+  assert.equal((await runtime.agent.run('Attempt all tools under explicit denial')).status, 'completed');
   assert.equal(step, 2);
   assert.deepEqual(await readdir(root), []);
   assert.equal(customCalls, 0);

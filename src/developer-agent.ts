@@ -21,7 +21,7 @@ export interface DeveloperAgentOptions {
   root: string;
   system?: string;
   maxSteps?: number;
-  /** Host-owned decision point for every tool call. Only true permits execution; omission denies all calls. */
+  /** Optional host policy. Omission permits registered tools; when configured, only true permits each call. */
   authorize?: (request: ToolAuthorization, context: { signal: AbortSignal }) => boolean | Promise<boolean>;
   /** Additional first-party or application tools, including connected MCP adapters. */
   tools?: Tool[];
@@ -57,10 +57,10 @@ async function authorized(decision: () => boolean | Promise<boolean>, signal: Ab
 
 /** Full local capabilities outside the model/tool loop. Always dispose the runtime. */
 export function createDeveloperAgent(options: DeveloperAgentOptions) {
-  if (options.authorize !== undefined && typeof options.authorize !== 'function') {
+  const authorize = options.authorize;
+  if (authorize !== undefined && typeof authorize !== 'function') {
     throw new TypeError('authorize must be a function');
   }
-  const authorize = options.authorize;
   const root = options.root;
   const lifetime = new AbortController();
   const processes = createProcessTools({ root });
@@ -71,7 +71,7 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
       async execute(args: unknown, context) {
         context.signal.throwIfAborted();
         if (
-          !authorize ||
+          authorize &&
           !(await authorized(
             () => authorize({ name: tool.name, args: structuredClone(args), workspaceRoot: root }, context),
             context.signal,
