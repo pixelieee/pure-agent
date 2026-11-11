@@ -29,33 +29,41 @@ export function commandOutput(name: string, source: string | undefined) {
   }
 }
 
-function bounded(text: string, limit: number): string {
+function bounded(text: string, limit: number, tail = false): string {
   const safe = safeText(text);
   if (safe.length <= limit) return safe;
+  const notice = '[display truncated; raw result unchanged]';
+  if (tail) {
+    for (const { index } of segmenter.segment(safe)) {
+      if (safe.length - index <= limit) return `${notice}\n${safe.slice(index)}`;
+    }
+    return notice;
+  }
   let result = '';
   for (const { segment } of segmenter.segment(safe)) {
     if (result.length + segment.length > limit) break;
     result += segment;
   }
-  return `${result}\n[display truncated; raw result unchanged]`;
+  return `${result}\n${notice}`;
 }
 
 export function renderCommandOutput(
   result: NonNullable<ReturnType<typeof commandOutput>>,
   width: number,
   expanded: boolean,
+  showStatus = true,
 ): string[] {
-  const inset = width >= 16 ? 2 : 0;
+  const inset = width >= 16 ? 4 : 0;
   const inner = Math.max(1, width - inset - 2);
   const rows: string[] = [];
   const add = (text: string, accent = false) => {
     const body = new Text(text, 0, 0).render(inner);
     for (const line of body)
       rows.push(
-        truncateToWidth(`${' '.repeat(inset)}${deco.blue('│')} ${accent ? deco.purple(line) : line}`, width, ''),
+        truncateToWidth(`${' '.repeat(inset)}${deco.muted('│')} ${accent ? deco.muted(line) : line}`, width, ''),
       );
   };
-  add(`${result.status} · exit ${result.exitCode ?? 'unavailable'}`, true);
+  if (showStatus) add(`${result.status} · exit ${result.exitCode ?? 'unavailable'}`, true);
   for (const [key, label] of [
     ['signal', 'signal'],
     ['terminationReason', 'termination'],
@@ -69,12 +77,29 @@ export function renderCommandOutput(
     add(`[${result.omittedBytes} bytes omitted from retained tail]`);
   if (Number.isSafeInteger(result.nextCursor) && (result.nextCursor as number) >= 0)
     add(`cursor ${result.nextCursor} · more output: ${result.hasMore === true ? 'yes' : 'no'}`);
-  add('stdout + stderr (combined)', true);
-  const output = new Text(bounded(result.output || '(no output)', expanded ? 24_000 : 2000), 0, 0).render(inner);
-  const visible = expanded ? output : output.slice(0, 6);
-  for (const line of visible) rows.push(truncateToWidth(`${' '.repeat(inset)}${deco.blue('│')} ${line}`, width, ''));
-  if (!expanded && output.length > visible.length) add('[preview clipped · Ctrl+O details]');
-  if (typeof result.logPath === 'string')
-    add(`log (${result.logComplete === true ? 'complete' : 'incomplete'}): ${bounded(result.logPath, 240)}`);
+  const failure =
+    result.status === 'failed' || result.status === 'terminated' || (result.exitCode !== null && result.exitCode !== 0);
+  const source = result.output || '(no output)';
+  const characterClipped = !expanded && safeText(source).length > 2000;
+  const output = new Text(bounded(source, expanded ? 24_000 : 2000, !expanded && !failure), 0, 0).render(inner);
+  const clipped = !expanded && (output.length > (failure ? 14 : 8) || characterClipped);
+  const tail = failure && characterClipped ? new Text(bounded(source, 2000, true), 0, 0).render(inner) : output;
+  const visible = !clipped
+    ? output
+    : failure
+      ? [...output.slice(0, 10), deco.muted('[preview clipped · Ctrl+O details]'), ...tail.slice(-3)]
+      : output.slice(-8);
+  for (const line of visible) rows.push(truncateToWidth(`${' '.repeat(inset)}${deco.muted('│')} ${line}`, width, ''));
+  if (clipped && !failure) add('[preview clipped · showing tail · Ctrl+O details]', true);
+  if (expanded) {
+    add('stdout + stderr (combined)', true);
+    if (typeof result.logPath === 'string')
+      add(`log (${result.logComplete === true ? 'complete' : 'incomplete'}): ${bounded(result.logPath, 240)}`, true);
+  } else {
+    add(
+      `stdout + stderr (combined)${typeof result.logPath === 'string' ? ` · log (${result.logComplete === true ? 'complete' : 'incomplete'})` : ''}`,
+      true,
+    );
+  }
   return rows;
 }

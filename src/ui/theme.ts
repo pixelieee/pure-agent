@@ -1,33 +1,34 @@
 import type { MarkdownTheme } from '@earendil-works/pi-tui';
 
-// Ordinary text follows the terminal theme. Only accents and paired bands use
-// fixed colors, so light and dark terminals retain a readable foreground.
+// The terminal owns the canvas and body color. One restrained accent marks input;
+// ANSI dim keeps secondary information subordinate on both dark and light themes.
 const paint =
   (code: string, reset = '0') =>
   (text: string) =>
     'NO_COLOR' in process.env || process.env.TERM === 'dumb' ? text : `\x1b[${code}m${text}\x1b[${reset}m`;
 const plain = (text: string) => text;
+const accent = paint('38;2;166;179;155', '39');
 export const deco = {
-  blue: paint('38;2;101;125;165', '39'),
-  purple: paint('38;2;136;116;159', '39'),
+  blue: accent,
+  purple: accent,
   text: plain,
-  muted: plain,
+  muted: paint('2', '22'),
   red: paint('31', '39'),
   bold: paint('1', '22'),
-  band: paint('38;2;229;231;237;48;2;29;38;58'),
-  selected: paint('38;2;238;241;248;48;2;48;67;101'),
+  band: paint('1', '22'),
+  selected: paint('7', '27'),
 };
 export const markdownTheme: MarkdownTheme = {
   heading: deco.bold,
   link: paint('4', '24'),
-  linkUrl: plain,
+  linkUrl: deco.muted,
   code: plain,
   codeBlock: plain,
-  codeBlockBorder: plain,
+  codeBlockBorder: deco.muted,
   quote: plain,
-  quoteBorder: deco.purple,
-  hr: plain,
-  listBullet: deco.purple,
+  quoteBorder: deco.muted,
+  hr: deco.muted,
+  listBullet: deco.muted,
   bold: deco.bold,
   italic: paint('3', '23'),
   strikethrough: paint('9', '29'),
