@@ -56,3 +56,8 @@ checkpoint writer, structured complete/incomplete snapshots, real filesystem fai
 and direct file-tool effects. No model is constructed or invoked. See
 [checkpoint contract and verification limits](checkpoints.md); loop order still
 requires static review and later real API acceptance.
+
+`test:nonmodel` additionally includes the explicitly reviewed `test/run-journal.test.ts`.
+It exercises the per-run reducer, actual temporary filesystem, direct checkpoint/storage callback boundary,
+and owned child-process crash/sync-failure boundaries. It creates no model or HTTP model substitute.
+See [per-run journal limits](run-journal.md); runtime-model and power-loss acceptance remain pending.

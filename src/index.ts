@@ -28,3 +28,11 @@ export type {
   SessionSaveOptions,
   SessionStore,
 } from './session.ts';
+export {
+  createRunJournal,
+  createRunJournalStore,
+  reduceRunJournal,
+  validateRunJournal,
+  RunJournalError,
+} from './run-journal.ts';
+export type { RunJournalFence, RunJournalRecord, RunJournalTransition, RunJournalStore } from './run-journal.ts';
