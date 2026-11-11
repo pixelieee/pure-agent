@@ -46,15 +46,18 @@
     }
   },
   "scripts": {
-    "test": "node --test test/*.test.ts test/quality.test.mjs",
+    "test": "node scripts/refuse-legacy-verification.mjs",
     "start": "node src/cli.ts",
     "example": "node examples/basic.ts",
     "typecheck": "tsc --noEmit",
-    "check": "npm run quality && npm run typecheck && npm test && npm run build",
+    "check": "node scripts/refuse-legacy-verification.mjs",
     "build": "node scripts/build.mjs",
-    "test:package": "npm run build && node --test --test-concurrency=1 test/package.test.mjs test/workspace-reader-package.test.mjs",
+    "test:package": "node scripts/refuse-legacy-verification.mjs",
     "prepack": "npm run build",
-    "quality": "biome ci --error-on-warnings src && biome ci --error-on-warnings test && biome ci --error-on-warnings examples && biome ci --error-on-warnings ."
+    "quality": "biome ci --error-on-warnings src && biome ci --error-on-warnings test && biome ci --error-on-warnings examples && biome ci --error-on-warnings .",
+    "check:static": "npm run quality && npm run typecheck && npm run build",
+    "test:nonmodel": "node --test test/filesystem.test.ts test/verification-entrypoints.test.mjs",
+    "test:package:nonmodel": "npm run build && node --test test/package-nonmodel.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",

@@ -1,5 +1,7 @@
 # Pure Agent
 
+当前验证入口与发布规则以 [验证政策](docs/verification-policy.md) 为准：禁止模型替身测试和 Windows 验收；默认 `test`、`check`、`test:package` 明确拒绝。下文旧完整验收命令及历史 CI 记录不代表当前允许运行或已验收。
+
 可组合的开发者 agent。简称 **pure**，CLI 主命令为 `pure`，保留 `pure-agent` 兼容别名。小核心，完整工具能力，代码与自然语言两种使用入口。
 
 - **Core**：模型/工具循环、Schema 校验、事件、取消与可恢复会话快照。
