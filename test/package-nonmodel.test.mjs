@@ -82,12 +82,14 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   // Importing the real entrypoints does not instantiate a model or execute a request.
   const script = `import assert from 'node:assert/strict';
     for (const name of ${JSON.stringify(imports)}) assert.ok(Object.keys(await import(name)).length > 0);
+    const journal = await import('pure-agent');
+    for (const name of ['createRunJournal', 'createRunJournalStore', 'reduceRunJournal', 'validateRunJournal', 'RunJournalError']) assert.equal(typeof journal[name], 'function');
     console.log('Package exports loaded.');`;
   assert.equal(run(['--input-type=module', '-e', script], consumer), 'Package exports loaded.\n');
   const typedEntry = join(consumer, 'consumer.mts');
   writeFileSync(
     typedEntry,
-    `import { AgentCheckpointError } from 'pure-agent';
+    `import { AgentCheckpointError, createRunJournal, createRunJournalStore, reduceRunJournal } from 'pure-agent';
      import type { AgentCheckpoint, CheckpointCallback, ContextProjector, Model, Tool, ToolHooks } from 'pure-agent';
      import type { ContextProjector as CoreProjector, Model as CoreModel } from 'pure-agent/core';
      import type { DeveloperAgentOptions } from 'pure-agent/runtime';
@@ -112,6 +114,11 @@ test('installed package exports and CLI preflight work without a model', (t) => 
        if (entry.stage === 'terminal') { const status: string = entry.result.status; void status; }
        void version;
      };
+     const journal = createRunJournal('task', 1, { version: 1, messages: [] });
+     const stopped = reduceRunJournal(journal, journal, { kind: 'interrupted' });
+     const unknown: 'unknown' = stopped.resources;
+     const store = createRunJournalStore({ path: '/private/run.json' });
+     void store; void unknown;
      const error: Error = new AgentCheckpointError();
      void error;
      const options: DeveloperAgentOptions = { ...hooks, checkpoint, model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };

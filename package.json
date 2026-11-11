@@ -56,7 +56,7 @@
     "prepack": "npm run build",
     "quality": "biome ci --error-on-warnings src && biome ci --error-on-warnings test && biome ci --error-on-warnings examples && biome ci --error-on-warnings .",
     "check:static": "npm run quality && npm run typecheck && npm run build",
-    "test:nonmodel": "node --test test/filesystem.test.ts test/verification-entrypoints.test.mjs test/snapshot-data-validation.test.ts test/context-projection-data.test.ts test/tool-authorization.test.ts test/tool-execution.test.ts test/checkpoint.test.ts",
+    "test:nonmodel": "node --test test/filesystem.test.ts test/verification-entrypoints.test.mjs test/snapshot-data-validation.test.ts test/context-projection-data.test.ts test/tool-authorization.test.ts test/tool-execution.test.ts test/checkpoint.test.ts test/run-journal.test.ts",
     "test:package:nonmodel": "npm run build && node --test test/package-nonmodel.test.mjs"
   },
   "devDependencies": {
