@@ -87,7 +87,8 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   const typedEntry = join(consumer, 'consumer.mts');
   writeFileSync(
     typedEntry,
-    `import type { ContextProjector, Model, Tool, ToolHooks } from 'pure-agent';
+    `import { AgentCheckpointError } from 'pure-agent';
+     import type { AgentCheckpoint, CheckpointCallback, ContextProjector, Model, Tool, ToolHooks } from 'pure-agent';
      import type { ContextProjector as CoreProjector, Model as CoreModel } from 'pure-agent/core';
      import type { DeveloperAgentOptions } from 'pure-agent/runtime';
      import { createFileTools } from 'pure-agent/tools/filesystem';
@@ -105,7 +106,15 @@ test('installed package exports and CLI preflight work without a model', (t) => 
        },
        afterToolCall(call) { return { result: { outcome: call.outcome, value: call.result } }; },
      };
-     const options: DeveloperAgentOptions = { ...hooks, model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };
+     const checkpoint: CheckpointCallback = async (entry: AgentCheckpoint) => {
+       const version: 1 = entry.snapshot.version;
+       if (entry.stage === 'before_tools') entry.calls.map(call => call.id + call.name);
+       if (entry.stage === 'terminal') { const status: string = entry.result.status; void status; }
+       void version;
+     };
+     const error: Error = new AgentCheckpointError();
+     void error;
+     const options: DeveloperAgentOptions = { ...hooks, checkpoint, model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };
      const tools: Tool[] = createFileTools({ root: '.' });
      const safe: boolean | undefined = tools[0]?.parallelSafe;
      void safe;

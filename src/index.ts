@@ -1,6 +1,8 @@
-export { createAgent } from './core.ts';
+export { createAgent, AgentCheckpointError } from './core.ts';
 export type {
   AgentOptions,
+  AgentCheckpoint,
+  CheckpointCallback,
   ContextProjector,
   AgentEvent,
   Message,
