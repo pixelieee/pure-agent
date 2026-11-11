@@ -67,14 +67,17 @@ class Transcript extends Container {
 
 /** Preserve Pi's cursor, editing and overflow indicators; simplify only chrome. */
 class MinimalEditor extends Editor {
+  protected override renderTopBorder(width: number, hiddenLineCount: number): string {
+    return hiddenLineCount ? super.renderTopBorder(width, hiddenLineCount) : deco.muted('─'.repeat(width));
+  }
   protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
     return hiddenLineCount ? super.renderBottomBorder(width, hiddenLineCount) : ' '.repeat(width);
   }
   override render(width: number): string[] {
     const lines = super.render(width);
-    // Replace padding only, without moving the editor's text or cursor.
-    if (width >= 3 && lines.length > 1 && lines[1].startsWith(' ')) {
-      lines[1] = deco.purple('›') + lines[1].slice(1);
+    // Pi clamps to one padding column below width 5. Never replace text or cursor bytes.
+    if (width >= 5 && lines.length > 1 && lines[1].startsWith('  ')) {
+      lines[1] = ` ${deco.purple('›')}` + lines[1].slice(2);
     }
     return lines;
   }
@@ -99,8 +102,8 @@ function controls(width: number, busy: boolean, cancellable: boolean): string {
   }
   const exit = busy ? 'cancel' : 'exit';
   const variants = [
-    ` Enter send  Shift+Enter/Ctrl+J newline  / commands  Ctrl+O details  PgUp/Dn scroll  Ctrl+C ${exit}`,
-    ` Enter send  Ctrl+J newline  / commands  Ctrl+O details  Ctrl+C ${exit}`,
+    ` Enter send   / commands   Ctrl+O details   PgUp/Dn history   Ctrl+C ${exit}`,
+    ` Enter send  Ctrl+O details  /help  Ctrl+C ${exit}`,
     ` Enter send  /help  Ctrl+C ${exit}`,
     ` /help  Ctrl+C ${exit}`,
     ' /help',
@@ -125,10 +128,14 @@ class ToolSummary implements Component {
   invalidate() {}
   render(width: number) {
     let target = '';
+    let shellCommand = '';
     try {
       const args = JSON.parse(this.args) as Record<string, unknown>;
       const value = args.path ?? args.file ?? args.query ?? args.command ?? args.id;
-      if (typeof value === 'string') target = `  ${safeText(value).replace(/\n/g, ' ')}`;
+      if (typeof value === 'string') {
+        if (typeof args.command === 'string') shellCommand = safeText(args.command).replace(/\n/g, ' ');
+        else target = `  ${safeText(value).replace(/\n/g, ' ')}`;
+      }
     } catch {
       /* Tool payload remains available in details. */
     }
@@ -151,7 +158,7 @@ class ToolSummary implements Component {
     }
     const command = commandOutput(this.name, this.result);
     if (!error && command && ['failed', 'terminated'].includes(command.status)) error = command.status;
-    const state =
+    const baseState =
       error !== undefined
         ? `! ${this.recorded ? 'recorded: ' : ''}${error}`
         : this.recorded
@@ -161,13 +168,32 @@ class ToolSummary implements Component {
             : command?.status === 'running'
               ? 'running'
               : 'done';
+    const state =
+      command?.status === 'exited' && !error ? `${baseState} · exit ${command.exitCode ?? 'unavailable'}` : baseState;
     // Reserve room for the state rather than letting long paths hide it.
     const shortState = truncateToWidth(state.replace(/\n/g, ' '), Math.max(1, Math.floor(width / 2)), '…');
-    const subjectWidth = Math.max(0, width - visibleWidth(shortState) - 3);
-    const subject = truncateToWidth(`  ${deco.bold(this.name.replace(/\n/g, ' '))}${target}`, subjectWidth, '…');
-    const label = `${subject} · ${error !== undefined ? deco.red(shortState) : shortState}`;
+    const subjectWidth = Math.max(0, width - visibleWidth(shortState) - 4);
+    const marker = this.result === undefined ? deco.blue('·') : deco.muted('·');
+    const subject = truncateToWidth(
+      `  ${marker} ${deco.bold(this.name.replace(/\n/g, ' '))}${target}`,
+      subjectWidth,
+      '…',
+    );
+    const gap = ' '.repeat(Math.max(1, width - visibleWidth(subject) - visibleWidth(shortState) - 2));
+    const label = `${subject}${gap}${error !== undefined ? deco.red(shortState) : deco.muted(shortState)}`;
     const lines = [truncateToWidth(label, width, '…')];
-    if (command) lines.push(...renderCommandOutput(command, width, this.expanded()));
+    if (shellCommand) {
+      const inset = width >= 16 ? 4 : 0;
+      const commandLines = new Text(`$ ${shellCommand}`, 0, 0).render(Math.max(1, width - inset * 2));
+      lines.push(
+        ...commandLines
+          .slice(0, this.expanded() ? commandLines.length : 2)
+          .map((line) => `${' '.repeat(inset)}${line}`),
+      );
+      if (!this.expanded() && commandLines.length > 2)
+        lines.push(truncateToWidth(deco.muted('    [command clipped · Ctrl+O details]'), width, '…'));
+    }
+    if (command) lines.push(...renderCommandOutput(command, width, this.expanded(), command.status !== 'exited'));
     if (this.expanded()) {
       const detail = new Text(
         deco.muted(
@@ -178,6 +204,7 @@ class ToolSummary implements Component {
       );
       lines.push(...detail.render(width));
     }
+    lines.push('');
     return lines;
   }
 }
@@ -221,7 +248,7 @@ export class PureAgentTUI implements SessionView {
     this.editor = new MinimalEditor(
       this.tui,
       {
-        borderColor: deco.blue,
+        borderColor: deco.muted,
         selectList: {
           selectedPrefix: deco.purple,
           selectedText: deco.selected,
@@ -230,38 +257,48 @@ export class PureAgentTUI implements SessionView {
           noMatch: deco.muted,
         },
       },
-      { paddingX: 2, autocompleteMaxVisible: 4 },
+      { paddingX: 3, autocompleteMaxVisible: 4 },
     );
     this.editor.setAutocompleteProvider(commandCompletion);
     this.editor.onSubmit = (text) => {
       void this.submit(text);
     };
-    const scroll = new ScrollView(this.transcript, { follow: 'end', primary: true, scrollbar: 'auto' });
+    const scroll = new ScrollView(this.transcript, {
+      follow: 'end',
+      primary: true,
+      scrollbar: 'auto',
+      scrollbarTrackStyle: (text) => ' '.repeat(visibleWidth(text)),
+      scrollbarThumbStyle: deco.muted,
+    });
     this.transcript.scroll = scroll;
     this.tui.setLayoutRoot(
       new VStack([
         {
           component: new Line(
-            () => ` ${deco.bold('pure agent')}${options.workspace ? `  ${safeText(options.workspace)}` : ''}`,
+            () =>
+              `  ${deco.bold('pure agent')}${options.workspace ? deco.muted(`   ${safeText(options.workspace)}`) : ''}`,
           ),
           shrink: 0,
         },
-        { component: new Line(() => ` ${this.mode}`), shrink: 0 },
+        { component: new Line(() => deco.muted(`  ${this.mode}`)), shrink: 0 },
+        { component: new Line(() => ''), shrink: 0 },
         { component: scroll, grow: 1, basis: 0, minSize: 1 },
         {
           component: new Line(() => {
             if (this.tui.isFollowingOutput) this.unseenOutput = false;
-            return deco.muted(` ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`);
+            return deco.muted(`  ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`);
           }),
           shrink: 0,
         },
         { component: this.editor, shrink: 0 },
         {
           component: new Line((width) =>
-            controls(
-              width,
-              this.controller?.busy ?? false,
-              this.controller?.cancellable ?? this.controller?.busy ?? false,
+            deco.muted(
+              controls(
+                width,
+                this.controller?.busy ?? false,
+                this.controller?.cancellable ?? this.controller?.busy ?? false,
+              ),
             ),
           ),
           shrink: 0,
@@ -369,10 +406,10 @@ export class PureAgentTUI implements SessionView {
       this.status = 'ready · restored session';
       this.transcript.addChild(new Text(deco.muted(text), 2, 1));
     } else if (kind === 'AGENT') {
-      this.transcript.addChild(new Markdown(text, 1, 1, markdownTheme, { color: deco.text }, { renderLatex: false }));
+      this.transcript.addChild(new Markdown(text, 2, 1, markdownTheme, { color: deco.text }, { renderLatex: false }));
     } else if (kind === 'USER') {
       this.tools.clear();
-      this.transcript.addChild(new Text(`› ${text}`, 1, 0, deco.band));
+      this.transcript.addChild(new Text(deco.bold(`› ${text}`), 2, 1));
     } else {
       this.transcript.addChild(new Text(kind === 'ERROR' ? deco.red(`! ${text}`) : text, 2, 1));
     }
@@ -396,7 +433,7 @@ export class PureAgentTUI implements SessionView {
     if (event.type === 'model_start') this.status = `working · model step ${event.step} · Esc to cancel`;
     if (event.type === 'assistant_delta' && event.text) {
       if (!this.streaming || this.streaming.step !== event.step) {
-        const block = new Markdown('', 1, 1, markdownTheme, { color: deco.text }, { renderLatex: false });
+        const block = new Markdown('', 2, 1, markdownTheme, { color: deco.text }, { renderLatex: false });
         this.transcript.addChild(block);
         this.streaming = { step: event.step, text: '', block };
       }

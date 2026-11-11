@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createProcessTools, type ProcessExecutionResult, type ProcessReadResult } from '../src/tools/process.ts';
 import { spawnSync } from 'node:child_process';
 import type { Terminal, ProgramStatus } from '@earendil-works/pi-tui';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { CURSOR_MARKER, Editor, visibleWidth } from '@earendil-works/pi-tui';
 import { PureAgentTUI } from '../src/ui/tui.ts';
 import { TerminalView, safeText } from '../src/ui/view.ts';
 import { deco } from '../src/ui/theme.ts';
@@ -90,6 +90,26 @@ test('real editor preserves multiline drafts, grapheme deletion and resize witho
   assert.match(screen().join('\n'), /›\s+alpha/);
 });
 
+test('narrow editor preserves Pi content and focused cursor bytes when padding shrinks', (t) => {
+  const { terminal, ui, screen } = presentation();
+  t.after(() => ui.stop());
+  for (const width of [3, 4]) {
+    terminal.columns = width;
+    terminal.resize?.();
+    for (const draft of ['', 'x', ' x']) {
+      ui.editor.setText(draft);
+      // Compare with Pi's own rendering, before our optional padding decoration.
+      const expected = Editor.prototype.render.call(ui.editor, width);
+      const rendered = ui.editor.render(width);
+      assert.ok(expected.join('\n').includes(CURSOR_MARKER));
+      assert.deepEqual(rendered, expected, `width ${width}, draft ${JSON.stringify(draft)}`);
+      assert.ok(rendered.join('\n').includes(CURSOR_MARKER));
+      assert.ok(screen().every((line) => visibleWidth(line) <= width));
+      assert.equal(ui.editor.getText(), draft);
+    }
+  }
+});
+
 test('command menu opens and dismisses without a model or draft loss', async (t) => {
   const { terminal, ui, screen } = presentation();
   t.after(() => ui.stop());
@@ -150,8 +170,8 @@ test('accent tokens are desaturated truecolor and honor NO_COLOR and dumb termin
   try {
     delete process.env.NO_COLOR;
     process.env.TERM = 'xterm-256color';
-    assert.equal(deco.blue('line'), '\x1b[38;2;101;125;165mline\x1b[39m');
-    assert.equal(deco.purple('marker'), '\x1b[38;2;136;116;159mmarker\x1b[39m');
+    assert.equal(deco.blue('line'), '\x1b[38;2;166;179;155mline\x1b[39m');
+    assert.equal(deco.purple('marker'), '\x1b[38;2;166;179;155mmarker\x1b[39m');
     assert.equal(deco.text('body'), 'body');
     process.env.NO_COLOR = '';
     for (const style of Object.values(deco)) assert.equal(style('text'), 'text');
@@ -256,14 +276,14 @@ test('interactive command cards use real tool results across live, recorded, res
 
 test('real retained-tail cards disclose tool loss, continuation, display clipping and sanitized controls', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'pure-interactive-tail-'));
-  const processes = createProcessTools({ root, inheritEnv: false, maxOutputBytes: 128 });
+  const processes = createProcessTools({ root, inheritEnv: false, maxOutputBytes: 256 });
   const { terminal, ui, screen } = presentation();
   t.after(async () => {
     ui.stop();
     await processes.dispose();
     await rm(root, { recursive: true, force: true });
   });
-  const output = `discarded prefix ${'x'.repeat(100)}\n\x1b]0;unsafe-title\x07${'readable output\n'.repeat(10)}\x1b]0;unsafe-title\x07`;
+  const output = `discarded prefix ${'x'.repeat(100)}\n\x1b]0;unsafe-title\x07${'readable output\n'.repeat(30)}\x1b]0;unsafe-title\x07`;
   await writeFile(join(root, 'output.mjs'), `process.stdout.write(${JSON.stringify(output)});`);
   const exec = processes.tools.find((item) => item.name === 'exec_command');
   const read = processes.tools.find((item) => item.name === 'read_process');
@@ -380,25 +400,40 @@ test('native scroll indicator, block anchoring and return to bottom preserve dra
   }
   ui.editor.setText('draft line one\nline two');
   screen();
+  const firstVisibleBlock = (lines: string[]) => {
+    const row = lines.findIndex((line) => /read_file\s+block-\d+\s+recorded/.test(line));
+    assert.ok(row >= 0, 'A named, nonblank transcript block must be visible');
+    return { row, id: /block-\d+/.exec(lines[row])?.[0] };
+  };
+  ui.tui.scrollToTop();
+  const transcriptRow = firstVisibleBlock(screen()).row;
+  ui.tui.scrollToBottom();
+  screen();
   terminal.input?.('\x1b[5~'); // Pi's PageUp, not an application shortcut.
   let lines = screen();
   assert.equal(ui.tui.isFollowingOutput, false);
   assert.match(lines.join('\n'), /Back to bottom · Ctrl\+End/);
-  const anchoredText = (line: string) => line.replace(/\s*│$/, '').trim();
-  const anchor = anchoredText(lines[2]);
+  // Place an identified block at the viewport top, not a spacer or fixed header.
+  ui.tui.scrollBy(firstVisibleBlock(lines).row - transcriptRow);
+  const anchor = firstVisibleBlock(screen());
+  assert.equal(anchor.row, transcriptRow);
   const top = ui.tui.viewportTop;
   ui.historyTool('read_file', JSON.stringify({ path: 'new-file' }), source);
   lines = screen();
-  assert.equal(anchoredText(lines[2]), anchor);
+  assert.deepEqual(firstVisibleBlock(lines), anchor);
   assert.equal(ui.tui.viewportTop, top);
   assert.match(lines.join('\n'), /New output · Ctrl\+End/);
   terminal.input?.('\x0f');
-  assert.equal(anchoredText(screen()[2]), anchor);
-  terminal.columns = 70;
+  assert.deepEqual(firstVisibleBlock(screen()), anchor);
+  assert.ok(ui.tui.viewportTop > top, 'Expanded preceding blocks must move the anchored content offset');
+  const expandedTop = ui.tui.viewportTop;
+  terminal.columns = 40;
   terminal.resize?.();
-  assert.equal(anchoredText(screen()[2]), anchor);
+  assert.deepEqual(firstVisibleBlock(screen()), anchor);
+  assert.ok(ui.tui.viewportTop > expandedTop, 'Narrowing must reflow the expanded preceding blocks');
   terminal.input?.('\x0f');
-  assert.equal(anchoredText(screen()[2]), anchor);
+  assert.deepEqual(firstVisibleBlock(screen()), anchor);
+  assert.equal(ui.tui.viewportTop, top);
   assert.equal(ui.editor.getText(), 'draft line one\nline two');
   terminal.input?.('\x1b[1;5F'); // Pi's Ctrl+End.
   assert.doesNotMatch(screen().join('\n'), /Back to bottom|New output/);
@@ -415,4 +450,28 @@ test('native scroll indicator, block anchoring and return to bottom preserve dra
   ui.reset();
   assert.equal(ui.tui.isFollowingOutput, true);
   assert.doesNotMatch(screen().join('\n'), /New output/);
+});
+
+test('bounded command previews preserve failure head and true tail with clipping disclosure', () => {
+  const executed = spawnSync(
+    process.execPath,
+    [
+      '-e',
+      "console.log('FIRST DIAGNOSTIC'); console.log('middle detail\\n'.repeat(500)); console.log('LAST DIAGNOSTIC'); process.exitCode = 2;",
+    ],
+    { encoding: 'utf8', timeout: 10_000, env: {} },
+  );
+  assert.ifError(executed.error);
+  assert.equal(executed.status, 2);
+  const source = JSON.stringify({ status: 'exited', exitCode: executed.status, output: executed.stdout });
+  const result = commandOutput('exec_command', source);
+  assert.ok(result);
+  for (const width of [100, 54, 24]) {
+    const rendered = renderCommandOutput(result, width, false).map(safeText).join('\n');
+    assert.match(rendered, /FIRST DIAGNOSTIC/);
+    assert.match(rendered, /LAST DIAGNOSTIC/);
+    assert.match(rendered, /preview clipped/);
+    assert.ok(renderCommandOutput(result, width, false).every((line) => visibleWidth(line) <= width));
+  }
+  assert.equal(JSON.stringify(result), source);
 });
