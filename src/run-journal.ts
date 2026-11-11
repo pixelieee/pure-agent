@@ -1,4 +1,5 @@
 import { types } from 'node:util';
+import { assertPlainData } from './record-data.ts';
 import { createPrivateRecordStore, PrivateRecordError, recordCodeIs as codeIs } from './private-record-store.ts';
 import type { PrivateRecordStore } from './private-record-store.ts';
 import type { AgentCheckpoint } from './checkpoint.ts';
@@ -48,25 +49,7 @@ const phases: Phase[] = [
 const outcomes = ['completed', 'blocked', 'cancelled', 'limit', 'interrupted', 'failed'];
 const positive = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) > 0;
 const identifier = (s: unknown): s is string => typeof s === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/u.test(s);
-// Reject lossy/non-data structures before cloning, reading fields, or encoding JSON.
-function plainData(value: unknown, ancestors = new Set<object>(), depth = 0): void {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
-  if (typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0)) return;
-  if (!value || typeof value !== 'object' || types.isProxy(value) || ancestors.has(value) || depth > 128)
-    fail('INVALID');
-  const array = Array.isArray(value);
-  const prototype = Object.getPrototypeOf(value);
-  if (array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) fail('INVALID');
-  const keys = Reflect.ownKeys(value).filter((key) => !(array && key === 'length'));
-  if (array && (keys.length !== value.length || keys.some((key, index) => key !== String(index)))) fail('INVALID');
-  ancestors.add(value);
-  for (const key of keys) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if (typeof key !== 'string' || !descriptor?.enumerable || !('value' in descriptor)) fail('INVALID');
-    plainData(descriptor.value, ancestors, depth + 1);
-  }
-  ancestors.delete(value);
-}
+const plainData = (value: unknown) => assertPlainData(value, fail);
 const safeCodes = new Set([
   'INVALID',
   'VERSION',

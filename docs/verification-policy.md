@@ -62,6 +62,11 @@ It exercises the per-run reducer, actual temporary filesystem, direct checkpoint
 and owned child-process crash/sync-failure boundaries. It creates no model or HTTP model substitute.
 See [per-run journal limits](run-journal.md); runtime-model and power-loss acceptance remain pending.
 
+`test:nonmodel` also explicitly allows `test/task-record.test.ts`: data-only task
+lifecycle reduction and real private filesystem checks, with no Agent or Model.
+Task and run revisions, cancellation, terminal/cleanup separation, hostile data and
+storage failures are component checks, not model-loop or restart acceptance.
+
 `test/private-record-store.test.ts` independently exercises the shared filesystem
 primitive with an overflowing reducer result and a retained result mutated after
 return. Invalid derived data must never replace the previous valid durable bytes.
