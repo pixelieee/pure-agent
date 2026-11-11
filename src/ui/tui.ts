@@ -31,6 +31,40 @@ class Line implements Component {
   }
 }
 
+/** Keep the same transcript block and bounded line offset while history reflows. */
+class Transcript extends Container {
+  scroll?: ScrollView;
+  private previous: { component: Component; start: number; height: number }[] = [];
+  override clear() {
+    super.clear();
+    this.previous = [];
+  }
+  override render(width: number): string[] {
+    const scroll = this.scroll;
+    const top = scroll?.scrollTop ?? 0;
+    const anchor = this.previous.find((item) => top >= item.start && top < item.start + item.height);
+    const lines: string[] = [];
+    const next = this.children.map((component) => {
+      const rendered = component.render(width);
+      const item = { component, start: lines.length, height: rendered.length };
+      lines.push(...rendered);
+      return item;
+    });
+    if (scroll && !scroll.isFollowingEnd && anchor) {
+      const target = next.find((item) => item.component === anchor.component);
+      if (target) {
+        // Update bounds before seeking: expanded content may exceed the old height.
+        scroll.updateLayout(lines.length, scroll.viewportHeight, () => {});
+        scroll.scrollTo(target.start + Math.min(top - anchor.start, Math.max(0, target.height - 1)), {
+          disableFollow: true,
+        });
+      }
+    }
+    this.previous = next;
+    return lines;
+  }
+}
+
 /** Preserve Pi's cursor, editing and overflow indicators; simplify only chrome. */
 class MinimalEditor extends Editor {
   protected override renderBottomBorder(width: number, hiddenLineCount: number): string {
@@ -133,6 +167,7 @@ class ToolSummary implements Component {
     const subject = truncateToWidth(`  ${deco.bold(this.name.replace(/\n/g, ' '))}${target}`, subjectWidth, '…');
     const label = `${subject} · ${error !== undefined ? deco.red(shortState) : shortState}`;
     const lines = [truncateToWidth(label, width, '…')];
+    if (command) lines.push(...renderCommandOutput(command, width, this.expanded()));
     if (this.expanded()) {
       const detail = new Text(
         deco.muted(
@@ -143,7 +178,6 @@ class ToolSummary implements Component {
       );
       lines.push(...detail.render(width));
     }
-    if (command) lines.push(...renderCommandOutput(command, width, this.expanded()));
     return lines;
   }
 }
@@ -160,7 +194,8 @@ export interface SessionActions {
 export class PureAgentTUI implements SessionView {
   readonly tui: TuiAltScreen;
   readonly editor: Editor;
-  private readonly transcript = new Container();
+  private readonly transcript = new Transcript();
+  private unseenOutput = false;
   private readonly tools = new Map<string, ToolSummary>();
   private controller?: SessionActions;
   private expanded = false;
@@ -175,7 +210,14 @@ export class PureAgentTUI implements SessionView {
 
   constructor(options: { terminal?: Terminal; modeLabel: string; note?: string; workspace?: string }) {
     this.mode = safeText(options.modeLabel).replace(/^REPLAY(?=\s|$)/, 'REPLAY · recorded output');
-    this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, { mouse: false });
+    this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, {
+      mouse: false,
+      scrollToEndIndicator: () => {
+        const width = this.tui.terminal.columns;
+        const label = this.unseenOutput ? 'New output' : 'Back to bottom';
+        return width >= label.length + 14 ? `${label} · Ctrl+End` : width >= 10 ? '↓ Ctrl+End' : '↓';
+      },
+    });
     this.editor = new MinimalEditor(
       this.tui,
       {
@@ -195,6 +237,7 @@ export class PureAgentTUI implements SessionView {
       void this.submit(text);
     };
     const scroll = new ScrollView(this.transcript, { follow: 'end', primary: true, scrollbar: 'auto' });
+    this.transcript.scroll = scroll;
     this.tui.setLayoutRoot(
       new VStack([
         {
@@ -206,9 +249,10 @@ export class PureAgentTUI implements SessionView {
         { component: new Line(() => ` ${this.mode}`), shrink: 0 },
         { component: scroll, grow: 1, basis: 0, minSize: 1 },
         {
-          component: new Line(() =>
-            deco.muted(` ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`),
-          ),
+          component: new Line(() => {
+            if (this.tui.isFollowingOutput) this.unseenOutput = false;
+            return deco.muted(` ${this.controller?.busy ? ['◐', '◓', '◑', '◒'][this.frame % 4] : '·'} ${this.status}`);
+          }),
           shrink: 0,
         },
         { component: this.editor, shrink: 0 },
@@ -284,6 +328,9 @@ export class PureAgentTUI implements SessionView {
       this.stop();
     }
   }
+  private transcriptChanged() {
+    this.unseenOutput = !this.tui.isFollowingOutput;
+  }
   private interrupt() {
     this.controller?.interrupt();
     if (this.controller?.closed) this.stop();
@@ -306,6 +353,7 @@ export class PureAgentTUI implements SessionView {
   }
   reset() {
     this.streaming = undefined;
+    this.unseenOutput = false;
     this.transcript.clear();
     this.tools.clear();
     this.tui.resetTextSelection();
@@ -315,6 +363,7 @@ export class PureAgentTUI implements SessionView {
   }
   panel(kind: PanelKind, content: unknown) {
     const text = safeText(content);
+    if (!(kind === 'STATUS' && text.startsWith('Cancellation requested'))) this.transcriptChanged();
     if (kind === 'STATUS' && text.startsWith('Cancellation requested')) this.status = text;
     else if (kind === 'STATUS' && text.startsWith('Session resumed:')) {
       this.status = 'ready · restored session';
@@ -330,12 +379,20 @@ export class PureAgentTUI implements SessionView {
     this.tui.requestRender();
   }
   historyTool(name: string, args: string, result: string) {
+    this.transcriptChanged();
     const tool = new ToolSummary('', safeText(name), safeText(args), () => this.expanded, true);
     tool.result = safeText(result);
     this.transcript.addChild(tool);
     this.tui.requestRender();
   }
   event(event: AgentEvent) {
+    if (
+      event.type === 'assistant_delta' ||
+      event.type === 'assistant' ||
+      event.type === 'tool_start' ||
+      event.type === 'tool_end'
+    )
+      this.transcriptChanged();
     if (event.type === 'model_start') this.status = `working · model step ${event.step} · Esc to cancel`;
     if (event.type === 'assistant_delta' && event.text) {
       if (!this.streaming || this.streaming.step !== event.step) {

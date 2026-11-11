@@ -350,3 +350,69 @@ test('actual background process stays running until a real termination result ar
   assert.match(screen().join('\n'), /recorded: killed/);
   assert.match(screen().join('\n'), /terminated · exit/);
 });
+
+test('expanded command cards put readable output before arguments and raw result', (t) => {
+  const { terminal, ui, screen } = presentation();
+  t.after(() => ui.stop());
+  const executed = spawnSync(process.execPath, ['-e', "console.log('readable first')"], {
+    encoding: 'utf8',
+    env: {},
+    timeout: 10_000,
+  });
+  assert.ifError(executed.error);
+  assert.equal(executed.status, 0);
+  ui.historyTool('exec_command', '{}', JSON.stringify({ status: 'exited', exitCode: 0, output: executed.stdout }));
+  terminal.rows = 60;
+  terminal.resize?.();
+  terminal.input?.('\x0f');
+  const text = screen().join('\n');
+  assert.ok(text.indexOf('readable first') >= 0);
+  assert.ok(text.indexOf('readable first') < text.indexOf('Arguments:'));
+  assert.ok(text.indexOf('Arguments:') < text.indexOf('Raw result (JSON)'));
+});
+
+test('native scroll indicator, block anchoring and return to bottom preserve drafts', (t) => {
+  const { terminal, ui, screen } = presentation();
+  t.after(() => ui.stop());
+  const source = readFileSync(new URL('../tsconfig.build.json', import.meta.url), 'utf8');
+  for (let index = 0; index < 50; index++) {
+    ui.historyTool('read_file', JSON.stringify({ path: `block-${index}` }), source);
+  }
+  ui.editor.setText('draft line one\nline two');
+  screen();
+  terminal.input?.('\x1b[5~'); // Pi's PageUp, not an application shortcut.
+  let lines = screen();
+  assert.equal(ui.tui.isFollowingOutput, false);
+  assert.match(lines.join('\n'), /Back to bottom · Ctrl\+End/);
+  const anchoredText = (line: string) => line.replace(/\s*│$/, '').trim();
+  const anchor = anchoredText(lines[2]);
+  const top = ui.tui.viewportTop;
+  ui.historyTool('read_file', JSON.stringify({ path: 'new-file' }), source);
+  lines = screen();
+  assert.equal(anchoredText(lines[2]), anchor);
+  assert.equal(ui.tui.viewportTop, top);
+  assert.match(lines.join('\n'), /New output · Ctrl\+End/);
+  terminal.input?.('\x0f');
+  assert.equal(anchoredText(screen()[2]), anchor);
+  terminal.columns = 70;
+  terminal.resize?.();
+  assert.equal(anchoredText(screen()[2]), anchor);
+  terminal.input?.('\x0f');
+  assert.equal(anchoredText(screen()[2]), anchor);
+  assert.equal(ui.editor.getText(), 'draft line one\nline two');
+  terminal.input?.('\x1b[1;5F'); // Pi's Ctrl+End.
+  assert.doesNotMatch(screen().join('\n'), /Back to bottom|New output/);
+  assert.equal(ui.tui.isFollowingOutput, true);
+  terminal.input?.('\x1b[5~');
+  assert.match(screen().join('\n'), /Back to bottom/);
+  assert.doesNotMatch(screen().join('\n'), /New output/);
+  for (const width of [24, 12, 8]) {
+    terminal.columns = width;
+    terminal.resize?.();
+    assert.ok(screen().every((line) => visibleWidth(line) <= width));
+    assert.equal(ui.editor.getText(), 'draft line one\nline two');
+  }
+  ui.reset();
+  assert.equal(ui.tui.isFollowingOutput, true);
+  assert.doesNotMatch(screen().join('\n'), /New output/);
+});
