@@ -1,6 +1,6 @@
 import { authorizeTool } from './tool-authorization.ts';
 import { createAgent } from './core.ts';
-import type { ContextProjector, Model, Tool, ToolHooks } from './core.ts';
+import type { CheckpointCallback, ContextProjector, Model, Tool, ToolHooks } from './core.ts';
 import { createFileTools } from './tools/filesystem.ts';
 import { createProcessTools } from './tools/process.ts';
 
@@ -26,6 +26,8 @@ export interface DeveloperAgentOptions extends ToolHooks {
   maxToolConcurrency?: number;
   /** Optional host-owned view of model request history; does not change tool authorization. */
   projectContext?: ContextProjector;
+  /** Optional awaited canonical-history persistence boundary, forwarded unchanged to Core. */
+  checkpoint?: CheckpointCallback;
   /** Optional host policy. Omission permits registered tools; when configured, only true permits each call. */
   authorize?: (request: ToolAuthorization, context: { signal: AbortSignal }) => boolean | Promise<boolean>;
   /** Additional first-party or application tools, including connected MCP adapters. */
@@ -54,6 +56,7 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
       maxSteps: options.maxSteps ?? 64,
       maxToolConcurrency: options.maxToolConcurrency,
       projectContext: options.projectContext,
+      checkpoint: options.checkpoint,
       beforeToolCall: options.beforeToolCall,
       afterToolCall: options.afterToolCall,
     });

@@ -1,3 +1,7 @@
+import { AgentCheckpointError, createCheckpointWriter } from './checkpoint.ts';
+import type { CheckpointCallback } from './checkpoint.ts';
+export { AgentCheckpointError } from './checkpoint.ts';
+export type { AgentCheckpoint, CheckpointCallback } from './checkpoint.ts';
 import { executeToolCalls, registerTools, validateToolConcurrency, validateToolHooks } from './tool-execution.ts';
 
 /** One agent, one session, one bounded model/tool loop. No built-in capabilities. */
@@ -98,6 +102,8 @@ export interface AgentOptions extends ToolHooks {
   maxToolConcurrency?: number;
   /** Transform detached request messages before each model step; stored history remains intact. */
   projectContext?: ContextProjector;
+  /** Awaited persistence boundary. Failure rejects run; it is not a tool result or observer error. */
+  checkpoint?: CheckpointCallback;
 }
 
 function errorText(error: unknown): string {
@@ -259,9 +265,11 @@ export function createAgent({
   maxSteps = 12,
   maxToolConcurrency = 1,
   projectContext,
+  checkpoint,
   beforeToolCall,
   afterToolCall,
 }: AgentOptions) {
+  const commit = createCheckpointWriter(checkpoint);
   validateToolConcurrency(maxToolConcurrency);
   const hooks = { beforeToolCall, afterToolCall };
   validateToolHooks(hooks);
@@ -306,6 +314,7 @@ export function createAgent({
         };
         const done = async (status: RunResult['status'], error?: string): Promise<RunResult> => {
           const result: RunResult = { status, text, steps, ...(error ? { error } : {}) };
+          await commit({ stage: 'terminal', snapshot: { version: 1, messages: history }, result });
           await emit({ type: 'done', ...result });
           return result;
         };
@@ -325,6 +334,8 @@ export function createAgent({
                 throw new Error('Context projection must return a complete JSON-compatible message history');
               }
             }
+            await commit({ stage: 'before_model', step: steps + 1, snapshot: { version: 1, messages: history } });
+            if (signal.aborted) return await done('cancelled');
             await emit({ type: 'model_start', step: steps + 1 });
             if (signal.aborted) return await done('cancelled');
             steps++;
@@ -359,6 +370,14 @@ export function createAgent({
             if (signal.aborted) return await done('cancelled');
             const assistant = reply;
             const calls = assistant.tool_calls ?? [];
+            if (calls.length) {
+              await commit({
+                stage: 'before_tools',
+                step: steps,
+                snapshot: { version: 1, messages: history },
+                calls: calls.map((call) => ({ id: call.id, name: call.function.name })),
+              });
+            }
             history.push(assistant);
             text = reply.content ?? '';
             await emit({ type: 'assistant', text, step: steps });
@@ -368,10 +387,14 @@ export function createAgent({
             for (const [index, call] of calls.entries()) {
               history.push({ role: 'tool', tool_call_id: call.id, content: results[index] as string });
             }
+            // Even cancelled batches must commit all settled results before terminal state.
+            await commit({ stage: 'after_tools', step: steps, snapshot: { version: 1, messages: history } });
             if (signal.aborted) return await done('cancelled');
           }
           return await done('limit', `Reached maximum of ${maxSteps} model steps`);
         } catch (error) {
+          // Never retry a failed checkpoint (including terminal) through done().
+          if (error instanceof AgentCheckpointError) throw error;
           return await done(signal.aborted ? 'cancelled' : 'blocked', errorText(error));
         }
       } finally {

@@ -48,3 +48,11 @@ GitHub 从事件关联的 SHA/ref 选择工作流；`push` 使用推送后的 ti
 本 CI 前置改动不新增或执行真实 API 验收入口，不包含后续产品分支能力。真实验收必须单独使用生产 provider、安全凭据、明确服务及费用范围、有限模型步数/输出/时限，并检查真实工具调用和可观察结果，不能仅凭 `completed` 判定。
 
 凭据不得写入源码、命令参数、报告或聊天。不保存原始请求、响应或私密会话；报告仅保留脱敏状态、提交与数值用量。无有效凭据、权限、额度或网络时报告具体阻塞，不改用模拟响应，也不把静态/组件检查计为 API 通过。
+
+## Awaited checkpoint component addition
+
+The fixed `test:nonmodel` list also includes `test/checkpoint.test.ts`: production
+checkpoint writer, structured complete/incomplete snapshots, real filesystem failure
+and direct file-tool effects. No model is constructed or invoked. See
+[checkpoint contract and verification limits](checkpoints.md); loop order still
+requires static review and later real API acceptance.
