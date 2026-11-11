@@ -1,6 +1,6 @@
 import { authorizeTool } from './tool-authorization.ts';
 import { createAgent } from './core.ts';
-import type { ContextProjector, Model, Tool } from './core.ts';
+import type { ContextProjector, Model, Tool, ToolHooks } from './core.ts';
 import { createFileTools } from './tools/filesystem.ts';
 import { createProcessTools } from './tools/process.ts';
 
@@ -17,7 +17,7 @@ export interface ToolAuthorization {
   args: unknown;
   workspaceRoot: string;
 }
-export interface DeveloperAgentOptions {
+export interface DeveloperAgentOptions extends ToolHooks {
   model: Model;
   root: string;
   system?: string;
@@ -54,6 +54,8 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
       maxSteps: options.maxSteps ?? 64,
       maxToolConcurrency: options.maxToolConcurrency,
       projectContext: options.projectContext,
+      beforeToolCall: options.beforeToolCall,
+      afterToolCall: options.afterToolCall,
     });
     const run = agent.run.bind(agent);
     agent.run = (input, runOptions = {}) =>

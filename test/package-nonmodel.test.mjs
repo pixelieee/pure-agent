@@ -87,7 +87,7 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   const typedEntry = join(consumer, 'consumer.mts');
   writeFileSync(
     typedEntry,
-    `import type { ContextProjector, Model, Tool } from 'pure-agent';
+    `import type { ContextProjector, Model, Tool, ToolHooks } from 'pure-agent';
      import type { ContextProjector as CoreProjector, Model as CoreModel } from 'pure-agent/core';
      import type { DeveloperAgentOptions } from 'pure-agent/runtime';
      import { createFileTools } from 'pure-agent/tools/filesystem';
@@ -98,7 +98,14 @@ test('installed package exports and CLI preflight work without a model', (t) => 
        return step > 0 ? messages : [];
      };
      const sameProjector: CoreProjector = project;
-     const options: DeveloperAgentOptions = { model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };
+     const hooks: ToolHooks = {
+       beforeToolCall(call, { signal }) {
+         signal.throwIfAborted();
+         if (call.name === 'forbidden') return { block: true, reason: 'Host policy' };
+       },
+       afterToolCall(call) { return { result: { outcome: call.outcome, value: call.result } }; },
+     };
+     const options: DeveloperAgentOptions = { ...hooks, model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };
      const tools: Tool[] = createFileTools({ root: '.' });
      const safe: boolean | undefined = tools[0]?.parallelSafe;
      void safe;
