@@ -16,7 +16,7 @@ interface SearchResponse {
 // Run model-supplied regular expressions off the main event loop. A pathological
 // expression must remain cancellable and must not freeze the interactive agent.
 const SEARCH_WORKER = String.raw`
-const { parentPort } = require('node:worker_threads');
+import { parentPort } from 'node:worker_threads';
 parentPort.on('message', ({ text, pattern, literal, ignoreCase, context, skip, limit, lineBytes }) => {
   try {
     const regex = literal ? null : new RegExp(pattern, ignoreCase ? 'iu' : 'u');
@@ -54,8 +54,9 @@ parentPort.on('message', ({ text, pattern, literal, ignoreCase, context, skip, l
 `;
 
 export class SearchWorker {
-  readonly #worker = new Worker(SEARCH_WORKER, {
-    eval: true,
+  // An explicit ESM URL avoids inheriting the caller's eval/stdin module mode.
+  // Keep execArgv inherited so security, loader and diagnostic flags are preserved.
+  readonly #worker = new Worker(new URL(`data:text/javascript,${encodeURIComponent(SEARCH_WORKER)}`), {
     resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
   });
 

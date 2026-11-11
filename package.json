@@ -57,7 +57,7 @@
     "quality": "biome ci --error-on-warnings src && biome ci --error-on-warnings test && biome ci --error-on-warnings examples && biome ci --error-on-warnings .",
     "check:static": "npm run quality && npm run typecheck && npm run build",
     "test:nonmodel": "node --test test/filesystem.test.ts test/verification-entrypoints.test.mjs",
-    "test:package:nonmodel": "npm run build && node --test test/package-nonmodel.test.mjs"
+    "test:package:nonmodel": "npm run build && node --test test/package-nonmodel.test.mjs test/filesystem-worker-package.test.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.4",
