@@ -1,5 +1,7 @@
 # 贡献指南
 
+当前验证入口与发布规则以 [验证政策](docs/verification-policy.md) 为准：禁止模型替身测试和 Windows 验收；默认 `test`、`check`、`test:package` 明确拒绝。下文旧完整验收命令及历史 CI 记录不代表当前允许运行或已验收。
+
 ## 保持基本单元小而可靠
 
 Pure Agent 当前聚焦一个基本 Agent：模型、工具、会话循环与可观察结果。SDK 和 CLI 共用核心；不要顺手扩展成多 Agent 编排、管理平台或后台调度系统。
