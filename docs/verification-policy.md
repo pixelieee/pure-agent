@@ -14,7 +14,9 @@ npm run test:package:nonmodel
 首次安装需要依赖源访问；已有完整 npm 缓存时可用 `npm ci --offline --ignore-scripts`。缓存路径通过 `npm_config_cache` 指定，不改变锁定依赖或生命周期限制。
 
 - `check:static`：完整现有 Biome 质量范围、严格类型检查和构建。扫描历史测试源码但不执行它们；不放宽规则。
-- `test:nonmodel`：固定列表仅含原有 `test/filesystem.test.ts` 、`test/verification-entrypoints.test.mjs` 、`test/snapshot-data-validation.test.ts` 和 `test/context-projection-data.test.ts`，没有通配符。前者直接调用真实文件工具、临时文件和搜索 worker，依赖 schema、filesystem-internal、filesystem-search，不创建 agent 或模型；原有断言不变。入口测试先核对默认命令及前后置钩子，再检查明确拒绝入口。快照测试仅把持久化数据传给真实校验函数，不构造 agent 或模型，不执行模型循环。投影测试只检查同一生产快照校验契约和独立回调类型，不调用 agent 或模型；真实循环中的投影顺序、取消和观察器隔离仍待真实 API 验证。
+- `test:nonmodel`：固定列表仅含原有 `test/filesystem.test.ts` 、`test/verification-entrypoints.test.mjs` 、`test/snapshot-data-validation.test.ts` 、`test/context-projection-data.test.ts` 和 `test/tool-authorization.test.ts`，没有通配符。前者直接调用真实文件工具、临时文件和搜索 worker，依赖 schema、filesystem-internal、filesystem-search，不创建 agent 或模型；原有断言不变。入口测试先核对默认命令及前后置钩子，再检查明确拒绝入口。快照测试仅把持久化数据传给真实校验函数，不构造 agent 或模型，不执行模型循环。投影测试只检查同一生产快照校验契约和独立回调类型，不调用 agent 或模型；真实循环中的投影顺序、取消和观察器隔离仍待真实 API 验证。
+授权边界测试直接调用生产包装器及真实临时文件/进程工具，覆盖可选策略、严格批准、异常、取消、参数隔离和工作区边界；不构造模型，也不证明模型到运行时的调用链。
+
 - `test:package:nonmodel`：构建并打包，独立 consumer 按锁文件运行时依赖图执行 `npm ci --offline --ignore-scripts`，核对版本、真实导出导入、消费者类型声明编译和两个 CLI 的 `--help`。不实例化或调用模型；类型探针只编译不执行。缓存缺失、安装失败或超时即失败。
 
 这只是有限的文件工具、安装、入口和类型检查，不是完整 UT/IT/E2E、模型协议、任务执行或真实 API 验收。扩大列表前必须审查文件及传递依赖；不能为了提高数量加入模型替身。
