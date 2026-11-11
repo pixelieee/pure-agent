@@ -37,3 +37,21 @@ from `2fe8002` are deliberately excluded.
 Earlier reviewed visuals were rasterized component output, not physical-terminal
 screenshots or live-model evidence. Live API, physical terminal, Windows/macOS
 and remote CI acceptance are not established by this candidate.
+
+### Output navigation (functional candidate)
+
+Command cards place readable combined stdout/stderr before arguments and raw JSON.
+Ctrl+O still toggles details globally; no per-card focus mode is introduced.
+Pi 1.5.0 owns PgUp/PgDn, Ctrl+Home and Ctrl+End. While away from the bottom,
+its native indicator offers Ctrl+End; transcript changes switch the label to
+“New output”. Returning to the bottom clears that notice. Narrow terminals
+shorten the label without adding a new shortcut. Mouse capture remains disabled.
+
+The transcript preserves the top visible component and its bounded rendered-line
+offset across append, details toggles and width changes. If a component shrinks,
+the offset clamps to its last line; terminal height and available scroll range
+can also clamp the viewport. This is block anchoring, not character-level reflow
+anchoring inside a long paragraph. The editor remains focused and drafts stay
+unchanged. Session reset clears anchors and unread state.
+
+These changes are behavior-only and do not establish a final visual design.
