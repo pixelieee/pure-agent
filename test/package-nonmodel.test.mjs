@@ -98,8 +98,10 @@ test('installed package exports and CLI preflight work without a model', (t) => 
        return step > 0 ? messages : [];
      };
      const sameProjector: CoreProjector = project;
-     const options: DeveloperAgentOptions = { model: sameContract, root: '.', projectContext: sameProjector };
+     const options: DeveloperAgentOptions = { model: sameContract, root: '.', projectContext: sameProjector, maxToolConcurrency: 2 };
      const tools: Tool[] = createFileTools({ root: '.' });
+     const safe: boolean | undefined = tools[0]?.parallelSafe;
+     void safe;
      void options;
      void tools;`,
   );
