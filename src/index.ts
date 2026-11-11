@@ -44,3 +44,5 @@ export {
   TaskError,
 } from './task-record.ts';
 export type { TaskRecord, TaskRecordStore, TaskStatus, TaskCleanup, TaskEvent, TaskTransition } from './task-record.ts';
+export { createTaskHost } from './task-host.ts';
+export type { TaskRuntime, TaskAccepted, TaskState } from './task-host.ts';

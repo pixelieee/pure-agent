@@ -70,3 +70,8 @@ storage failures are component checks, not model-loop or restart acceptance.
 `test/private-record-store.test.ts` independently exercises the shared filesystem
 primitive with an overflowing reducer result and a retained result mutated after
 return. Invalid derived data must never replace the previous valid durable bytes.
+
+`test/task-host.test.ts` is a fixed non-model entry: no-provider lifecycle drivers,
+production awaited checkpoints and an actual Linux managed background process.
+No Agent/Model or HTTP substitute is constructed. Results establish only host
+admission, cancellation, event and cleanup behavior, not actual model-loop E2E.

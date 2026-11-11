@@ -83,15 +83,16 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   const script = `import assert from 'node:assert/strict';
     for (const name of ${JSON.stringify(imports)}) assert.ok(Object.keys(await import(name)).length > 0);
     const journal = await import('pure-agent');
-    for (const name of ['createRunJournal', 'createRunJournalStore', 'reduceRunJournal', 'validateRunJournal', 'RunJournalError']) assert.equal(typeof journal[name], 'function');
+    for (const name of ['createRunJournal', 'createRunJournalStore', 'reduceRunJournal', 'validateRunJournal', 'RunJournalError', 'createTaskHost', 'createTaskRecordStore', 'validateTaskRecord']) assert.equal(typeof journal[name], 'function');
     console.log('Package exports loaded.');`;
   assert.equal(run(['--input-type=module', '-e', script], consumer), 'Package exports loaded.\n');
   const typedEntry = join(consumer, 'consumer.mts');
   writeFileSync(
     typedEntry,
-    `import { AgentCheckpointError, createRunJournal, createRunJournalStore, reduceRunJournal } from 'pure-agent';
+    `import { AgentCheckpointError, createRunJournal, createRunJournalStore, reduceRunJournal, createTaskHost } from 'pure-agent';
      import type { AgentCheckpoint, CheckpointCallback, ContextProjector, Model, Tool, ToolHooks } from 'pure-agent';
      import type { ContextProjector as CoreProjector, Model as CoreModel } from 'pure-agent/core';
+     import { createDeveloperAgent } from 'pure-agent/runtime';
      import type { DeveloperAgentOptions } from 'pure-agent/runtime';
      import { createFileTools } from 'pure-agent/tools/filesystem';
      declare const model: Model;
@@ -125,6 +126,10 @@ test('installed package exports and CLI preflight work without a model', (t) => 
      const tools: Tool[] = createFileTools({ root: '.' });
      const safe: boolean | undefined = tools[0]?.parallelSafe;
      void safe;
+     const host = createTaskHost({ path: '/private/task.json', createRuntime: checkpoint => createDeveloperAgent({ ...options, checkpoint }) });
+     const accepted = host.start('Input', { requestId: 'request' });
+     const state = accepted.then(({ taskId, runId }) => host.cancel(taskId, runId));
+     void state;
      void options;
      void tools;`,
   );
