@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createProcessTools, type ProcessExecutionResult, type ProcessReadResult } from '../src/tools/process.ts';
 import { spawnSync } from 'node:child_process';
 import type { Terminal, ProgramStatus } from '@earendil-works/pi-tui';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { PureAgentTUI } from '../src/ui/tui.ts';
 import { TerminalView, safeText } from '../src/ui/view.ts';
 import { deco } from '../src/ui/theme.ts';
+import { commandOutput, renderCommandOutput } from '../src/ui/command-output.ts';
 
 /** Terminal transport only. These checks never create an agent or model response. */
 class PresentationTerminal implements Terminal {
@@ -179,17 +184,169 @@ test('actual subprocess stderr remains accessible in minimal recorded tool detai
   assert.ok(source.indexOf('"output"') > 600);
   ui.historyTool('exec_command', '{}', source);
   assert.match(screen().join('\n'), /exec_command.*recorded: exit 2/);
-  assert.doesNotMatch(screen().join('\n'), /Actual subprocess diagnostic/);
+  assert.match(screen().join('\n'), /Actual subprocess/);
   terminal.input?.('\x0f');
   assert.match(screen().join('\n'), /Actual subprocess diagnostic/);
   terminal.input?.('\x0f');
   terminal.columns = 24;
   terminal.resize?.();
-  assert.doesNotMatch(screen().join('\n'), /Actual subprocess diagnostic/);
+  assert.match(screen().join('\n'), /Actual subprocess/);
   assert.ok(screen().every((line) => visibleWidth(line) <= 24));
   terminal.columns = 100;
   terminal.resize?.();
   terminal.input?.('\x0f');
   assert.match(screen().join('\n'), /Actual subprocess diagnostic/);
   assert.equal(JSON.parse(source).output, executed.stderr);
+});
+
+test('interactive command cards use real tool results across live, recorded, resize and details paths', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-interactive-card-'));
+  const processes = createProcessTools({ root, inheritEnv: false });
+  const { terminal, ui, screen } = presentation();
+  t.after(async () => {
+    ui.stop();
+    await processes.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+  await writeFile(
+    join(root, 'command.mjs'),
+    "process.stdout.write('First output line\\nSecond output line\\n'); process.stderr.write('Actual diagnostic\\n'); process.exitCode = 3;",
+  );
+  const tool = processes.tools.find((item) => item.name === 'exec_command');
+  assert.ok(tool);
+  const args = { command: `"${process.execPath}" command.mjs` };
+  ui.event({ type: 'tool_start', id: 'actual-command', name: tool.name, args });
+  assert.match(screen().join('\n'), /exec_command.*running/);
+  const result = (await tool.execute(args, { signal: new AbortController().signal })) as ProcessExecutionResult;
+  assert.equal(result.exitCode, 3);
+  const source = JSON.stringify(result);
+  ui.event({ type: 'tool_end', id: 'actual-command', name: tool.name, result: source });
+  let text = screen().join('\n');
+  assert.match(text, /exec_command.*exit 3/);
+  assert.match(text, /stdout \+ stderr \(combined\)/);
+  assert.match(text, /First output line\s*\n.*Second output line/);
+  assert.match(text, /Actual diagnostic/);
+  assert.doesNotMatch(text, /"output"|Raw result/);
+  ui.editor.setText('keep this draft 你好');
+  for (const width of [100, 40, 24, 12, 8, 80]) {
+    terminal.columns = width;
+    terminal.resize?.();
+    for (let toggle = 0; toggle < 2; toggle++) {
+      terminal.input?.('\x0f');
+      const lines = screen();
+      assert.ok(lines.every((line) => visibleWidth(line) <= width));
+      assert.equal(ui.editor.getText(), 'keep this draft 你好');
+    }
+  }
+  terminal.columns = 100;
+  terminal.rows = 70;
+  terminal.resize?.();
+  terminal.input?.('\x0f');
+  text = screen().join('\n');
+  assert.match(text, /Raw result \(JSON\)/);
+  assert.match(text, /"stdoutBytes":/);
+  assert.match(text, /First output line\s*\n.*Second output line/);
+  assert.equal(JSON.stringify(result), source);
+  terminal.input?.('\x0f');
+  ui.reset();
+  ui.historyTool(tool.name, JSON.stringify(args), source);
+  assert.match(screen().join('\n'), /recorded: exit 3/);
+  assert.match(screen().join('\n'), /Actual diagnostic/);
+});
+
+test('real retained-tail cards disclose tool loss, continuation, display clipping and sanitized controls', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-interactive-tail-'));
+  const processes = createProcessTools({ root, inheritEnv: false, maxOutputBytes: 128 });
+  const { terminal, ui, screen } = presentation();
+  t.after(async () => {
+    ui.stop();
+    await processes.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+  const output = `discarded prefix ${'x'.repeat(100)}\n\x1b]0;unsafe-title\x07${'readable output\n'.repeat(10)}\x1b]0;unsafe-title\x07`;
+  await writeFile(join(root, 'output.mjs'), `process.stdout.write(${JSON.stringify(output)});`);
+  const exec = processes.tools.find((item) => item.name === 'exec_command');
+  const read = processes.tools.find((item) => item.name === 'read_process');
+  assert.ok(exec && read);
+  const context = { signal: new AbortController().signal };
+  const result = (await exec.execute(
+    { command: `"${process.execPath}" output.mjs` },
+    context,
+  )) as ProcessExecutionResult;
+  assert.equal(result.truncated, true);
+  ui.historyTool(exec.name, '{}', JSON.stringify(result));
+  assert.match(screen().join('\n'), /output truncated by tool/);
+  assert.match(screen().join('\n'), /preview clipped/);
+  assert.doesNotMatch(screen().join('\n'), /unsafe-title/);
+  ui.reset();
+  const first = (await read.execute({ id: result.id, cursor: 0, maxBytes: 20 }, context)) as ProcessReadResult;
+  assert.ok(first.omittedBytes > 0);
+  assert.equal(first.hasMore, true);
+  ui.historyTool(read.name, '{}', JSON.stringify(first));
+  assert.match(screen().join('\n'), new RegExp(`${first.omittedBytes} bytes omitted`));
+  assert.match(screen().join('\n'), new RegExp(`cursor ${first.nextCursor} · more output: yes`));
+  terminal.input?.('\x0f');
+  assert.ok(screen().every((line) => visibleWidth(line) <= terminal.columns));
+});
+
+test('command projection bounds decoded controls and graphemes without altering raw details', () => {
+  for (const grapheme of ['😀', 'e\u0301', '🇨🇳', '👨‍👩‍👧‍👦']) {
+    const source = JSON.stringify({
+      status: 'failed',
+      exitCode: null,
+      output: `\x1b]0;${'hidden'.repeat(500)}\x07${'x'.repeat(23_999)}${grapheme}TAIL`,
+      error: 'failure\x1b[2J',
+      logPath: 'logs/output',
+      logComplete: false,
+    });
+    const result = commandOutput('exec_command', source);
+    assert.ok(result);
+    const rendered = renderCommandOutput(result, 80, true).map(safeText).join('\n');
+    assert.match(rendered, /failed · exit unavailable/);
+    assert.match(rendered, /display truncated; raw result unchanged/);
+    assert.match(rendered, /log \(incomplete\)/);
+    assert.doesNotMatch(rendered, /hidden|TAIL/);
+    assert.ok(!rendered.includes(grapheme));
+    assert.equal(JSON.stringify(result), source);
+  }
+  for (const source of [
+    'null',
+    '[]',
+    'bad JSON',
+    '{"error":"permission denied"}',
+    '{"status":"unknown","exitCode":0,"output":"text"}',
+    '{"status":"exited","exitCode":0.5,"output":"text"}',
+  ]) {
+    assert.equal(commandOutput('exec_command', source), undefined);
+  }
+  assert.equal(commandOutput('custom', '{"status":"exited","exitCode":0,"output":"text"}'), undefined);
+});
+
+test('actual background process stays running until a real termination result arrives', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'pure-interactive-running-'));
+  const processes = createProcessTools({ root, inheritEnv: false });
+  const { ui, screen } = presentation();
+  t.after(async () => {
+    ui.stop();
+    await processes.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+  await writeFile(join(root, 'wait.mjs'), 'setInterval(() => {}, 1000);');
+  const start = processes.tools.find((item) => item.name === 'start_process');
+  const kill = processes.tools.find((item) => item.name === 'kill_process');
+  assert.ok(start && kill);
+  const context = { signal: new AbortController().signal };
+  const args = { command: `"${process.execPath}" wait.mjs` };
+  ui.event({ type: 'tool_start', id: 'start', name: start.name, args });
+  const running = (await start.execute(args, context)) as ProcessExecutionResult;
+  assert.equal(running.status, 'running');
+  ui.event({ type: 'tool_end', id: 'start', name: start.name, result: JSON.stringify(running) });
+  assert.match(screen().join('\n'), /start_process.*running/);
+  assert.doesNotMatch(screen().join('\n'), /done/);
+  const killed = (await kill.execute({ id: running.id }, context)) as ProcessExecutionResult;
+  assert.equal(killed.status, 'terminated');
+  ui.reset();
+  ui.historyTool(kill.name, JSON.stringify({ id: running.id }), JSON.stringify(killed));
+  assert.match(screen().join('\n'), /recorded: killed/);
+  assert.match(screen().join('\n'), /terminated · exit/);
 });

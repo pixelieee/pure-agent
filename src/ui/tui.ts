@@ -17,6 +17,7 @@ import type { AgentEvent, RunResult } from '../core.ts';
 import { safeText, type PanelKind, type SessionView } from './view.ts';
 import { commandCompletion } from './commands.ts';
 import { formatToolDetails } from './tool-details.ts';
+import { commandOutput, renderCommandOutput } from './command-output.ts';
 import { deco, markdownTheme } from './theme.ts';
 
 class Line implements Component {
@@ -114,6 +115,8 @@ class ToolSummary implements Component {
         /* Non-JSON results remain neutral completed entries. */
       }
     }
+    const command = commandOutput(this.name, this.result);
+    if (!error && command && ['failed', 'terminated'].includes(command.status)) error = command.status;
     const state =
       error !== undefined
         ? `! ${this.recorded ? 'recorded: ' : ''}${error}`
@@ -121,7 +124,9 @@ class ToolSummary implements Component {
           ? 'recorded'
           : this.result === undefined
             ? 'running'
-            : 'done';
+            : command?.status === 'running'
+              ? 'running'
+              : 'done';
     // Reserve room for the state rather than letting long paths hide it.
     const shortState = truncateToWidth(state.replace(/\n/g, ' '), Math.max(1, Math.floor(width / 2)), '…');
     const subjectWidth = Math.max(0, width - visibleWidth(shortState) - 3);
@@ -131,13 +136,14 @@ class ToolSummary implements Component {
     if (this.expanded()) {
       const detail = new Text(
         deco.muted(
-          `Arguments:\n${formatToolDetails(this.args)}\nResult:\n${this.result === undefined ? 'running…' : formatToolDetails(this.result)}`,
+          `Arguments:\n${formatToolDetails(this.args)}\n${command ? 'Raw result (JSON)' : 'Result'}:\n${this.result === undefined ? 'running…' : formatToolDetails(this.result)}`,
         ),
-        4,
+        width >= 16 ? 4 : 0,
         0,
       );
       lines.push(...detail.render(width));
     }
+    if (command) lines.push(...renderCommandOutput(command, width, this.expanded()));
     return lines;
   }
 }
