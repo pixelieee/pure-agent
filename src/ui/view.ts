@@ -58,6 +58,58 @@ export interface SessionView {
   reset?(): void;
 }
 
+function preview(text: string): string {
+  // Sanitize before clipping so a partial terminal escape cannot escape the display boundary.
+  const safe = safeText(text);
+  if (safe.length <= 600) return safe;
+  let bounded = '';
+  for (const { segment } of segmenter.segment(safe)) {
+    if (bounded.length + segment.length > 600) break;
+    bounded += segment;
+  }
+  return `${bounded}\n[... truncated display only]`;
+}
+const processResultTools = new Set(['exec_command', 'start_process', 'read_process', 'kill_process']);
+
+/** Project the supplied result only. Never read logs, rerun a command, or change retained evidence. */
+function resultPreview(name: string, source: string): string {
+  if (!processResultTools.has(name)) return preview(source);
+  try {
+    const result = JSON.parse(source);
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      typeof result.output !== 'string' ||
+      !['running', 'exited', 'failed', 'terminated'].includes(result.status) ||
+      (result.exitCode !== null && !Number.isSafeInteger(result.exitCode))
+    )
+      return preview(source);
+    const lines = [
+      `Status: ${result.status}; exit code: ${result.exitCode ?? 'unavailable'}`,
+      `Output:\n${preview(result.output)}`,
+    ];
+    if (result.truncated === true) lines.push('[process output truncated by tool]');
+    if (Number.isSafeInteger(result.omittedBytes) && result.omittedBytes > 0)
+      lines.push(`[${result.omittedBytes} output bytes omitted from retained tail]`);
+    if (Number.isSafeInteger(result.nextCursor) && result.nextCursor >= 0)
+      lines.push(`Next cursor: ${result.nextCursor}; more output: ${result.hasMore === true ? 'yes' : 'no'}`);
+    for (const [key, label] of [
+      ['id', 'Process'],
+      ['signal', 'Signal'],
+      ['terminationReason', 'Termination'],
+      ['error', 'Error'],
+      ['cleanupWarning', 'Cleanup warning'],
+    ]) {
+      if (typeof result[key] === 'string' && result[key]) lines.push(`${label}: ${preview(result[key])}`);
+    }
+    if (typeof result.logPath === 'string')
+      lines.push(`Log (${result.logComplete === true ? 'complete' : 'incomplete'}): ${preview(result.logPath)}`);
+    return lines.join('\n');
+  } catch {
+    return preview(source);
+  }
+}
+
 /** Append-only rendering avoids cursor races, hidden history, and redraw flicker. */
 export class TerminalView implements SessionView {
   private output: Output;
@@ -84,20 +136,14 @@ export class TerminalView implements SessionView {
     }
   }
   historyTool(name: string, args: string, result: string) {
-    this.panel(
-      'TOOL',
-      `Recorded: ${name}\nArguments (raw): ${args}\nResult: ${result.length > 600 ? `${result.slice(0, 600)}\n[... truncated display only]` : result}`,
-    );
+    this.panel('TOOL', `Recorded: ${name}\nArguments (raw): ${args}\nResult: ${resultPreview(name, result)}`);
   }
   event(event: AgentEvent, modeLabel?: string) {
     if (event.type === 'model_start') this.panel('STATUS', `${modeLabel ? `${modeLabel} · ` : ''}model step`);
     if (event.type === 'assistant' && event.text) this.panel('AGENT', event.text);
     if (event.type === 'tool_start') this.panel('TOOL', `→ ${event.name}\nArguments: ${JSON.stringify(event.args)}`);
     if (event.type === 'tool_end')
-      this.panel(
-        'TOOL',
-        `← ${event.name}\nResult: ${event.result.length > 600 ? `${event.result.slice(0, 600)}\n[... truncated display only]` : event.result}`,
-      );
+      this.panel('TOOL', `← ${event.name}\nResult: ${resultPreview(event.name, event.result)}`);
   }
   finish(result: RunResult) {
     this.panel(
