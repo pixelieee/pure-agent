@@ -11,7 +11,7 @@ export interface Message {
   content: string | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
-  /** Opaque adapter-owned continuation data. Core preserves it without interpreting it. */
+  /** Opaque JSON-compatible continuation data. Core validates its shape but never interprets its contents. */
   providerData?: { kind: string; data: unknown };
 }
 export interface ToolDefinition {
@@ -80,29 +80,19 @@ function assistantMessage(reply: Message): Message {
   }
   const calls = reply.tool_calls ?? [];
   if (!Array.isArray(calls)) throw new Error('Model returned invalid tool calls');
-  const ids = new Set<string>();
-  for (const call of calls) {
-    if (
-      !call ||
-      typeof call.id !== 'string' ||
-      !call.id ||
-      ids.has(call.id) ||
-      call.type !== 'function' ||
-      typeof call.function?.name !== 'string' ||
-      typeof call.function?.arguments !== 'string'
-    )
-      throw new Error('Model returned an invalid or duplicate tool call');
-    ids.add(call.id);
-  }
-  if (reply.providerData !== undefined && (!reply.providerData || typeof reply.providerData.kind !== 'string')) {
-    throw new Error('Model returned invalid provider continuation data');
-  }
   const assistant: Message = {
     role: 'assistant',
     content: reply.content,
     ...(calls.length ? { tool_calls: calls } : {}),
-    ...(reply.providerData ? { providerData: structuredClone(reply.providerData) } : {}),
+    ...(reply.providerData !== undefined ? { providerData: reply.providerData } : {}),
   };
+  // The same retained fields must be valid for persistence before any tool can run.
+  try {
+    jsonValue(assistant);
+    assistantFields(assistant);
+  } catch {
+    throw new Error('Model returned invalid assistant data');
+  }
   return assistant;
 }
 
@@ -137,6 +127,38 @@ function object(value: unknown, allowed: readonly string[]): Record<string, unkn
   return record;
 }
 
+/** Shared structural contract for live responses and restored assistant messages. */
+function assistantFields(message: { content?: unknown; tool_calls?: unknown; providerData?: unknown }): Set<string> {
+  const pending = new Set<string>();
+  if (message.content !== null && typeof message.content !== 'string')
+    throw new Error('Invalid snapshot assistant content');
+  if (Object.hasOwn(message, 'tool_calls')) {
+    if (!Array.isArray(message.tool_calls) || !message.tool_calls.length)
+      throw new Error('Invalid snapshot tool calls');
+    for (const entry of message.tool_calls) {
+      const call = object(entry, ['id', 'type', 'function']);
+      const fn = object(call.function, ['name', 'arguments']);
+      if (
+        typeof call.id !== 'string' ||
+        !call.id ||
+        pending.has(call.id) ||
+        call.type !== 'function' ||
+        typeof fn.name !== 'string' ||
+        !fn.name ||
+        typeof fn.arguments !== 'string'
+      )
+        throw new Error('Invalid or duplicate snapshot tool call');
+      pending.add(call.id);
+    }
+  }
+  if (Object.hasOwn(message, 'providerData')) {
+    const provider = object(message.providerData, ['kind', 'data']);
+    if (typeof provider.kind !== 'string' || !provider.kind || !Object.hasOwn(provider, 'data'))
+      throw new Error('Invalid snapshot provider continuation data');
+  }
+  return pending;
+}
+
 /** Validate a complete, replay-safe history without executing tools or interpreting provider data. */
 export function validateAgentSnapshot(value: unknown): AgentSnapshot {
   jsonValue(value);
@@ -166,32 +188,7 @@ export function validateAgentSnapshot(value: unknown): AgentSnapshot {
           throw new Error('Invalid snapshot user message');
       } else if (role === 'assistant') {
         if (previous !== 'user' && previous !== 'tool') throw new Error('Invalid snapshot assistant sequence');
-        if (message.content !== null && typeof message.content !== 'string')
-          throw new Error('Invalid snapshot assistant content');
-        if (Object.hasOwn(message, 'tool_calls')) {
-          if (!Array.isArray(message.tool_calls) || !message.tool_calls.length)
-            throw new Error('Invalid snapshot tool calls');
-          for (const entry of message.tool_calls) {
-            const call = object(entry, ['id', 'type', 'function']);
-            const fn = object(call.function, ['name', 'arguments']);
-            if (
-              typeof call.id !== 'string' ||
-              !call.id ||
-              pending.has(call.id) ||
-              call.type !== 'function' ||
-              typeof fn.name !== 'string' ||
-              !fn.name ||
-              typeof fn.arguments !== 'string'
-            )
-              throw new Error('Invalid or duplicate snapshot tool call');
-            pending.add(call.id);
-          }
-        }
-        if (Object.hasOwn(message, 'providerData')) {
-          const provider = object(message.providerData, ['kind', 'data']);
-          if (typeof provider.kind !== 'string' || !provider.kind || !Object.hasOwn(provider, 'data'))
-            throw new Error('Invalid snapshot provider continuation data');
-        }
+        for (const id of assistantFields(message)) pending.add(id);
       } else throw new Error('Invalid snapshot message role');
     }
     if (role !== 'assistant' && (Object.hasOwn(message, 'tool_calls') || Object.hasOwn(message, 'providerData')))
@@ -277,76 +274,78 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
       if (running) throw new Error('This agent session is already running');
       if (typeof input !== 'string' || !input.trim()) throw new Error('Input must be a non-empty string');
       running = true;
-      const signal = options.signal ?? new AbortController().signal;
-      let steps = 0;
-      let text = '';
-      const emit = async (event: AgentEvent) => {
-        try {
-          await options.onEvent?.(structuredClone(event));
-        } catch {
-          /* Observers never own execution. */
-        }
-      };
-      const done = async (status: RunResult['status'], error?: string): Promise<RunResult> => {
-        const result: RunResult = { status, text, steps, ...(error ? { error } : {}) };
-        await emit({ type: 'done', ...result });
-        return result;
-      };
       try {
-        if (signal.aborted) return await done('cancelled');
-        history.push({ role: 'user', content: input });
-        while (steps < maxSteps) {
-          if (signal.aborted) return await done('cancelled');
-          await emit({ type: 'model_start', step: steps + 1 });
-          if (signal.aborted) return await done('cancelled');
-          steps++;
-          let acceptingDeltas = true;
-          let deltaDelivery = Promise.resolve();
-          let reply: Message;
+        const signal = options.signal ?? new AbortController().signal;
+        let steps = 0;
+        let text = '';
+        const emit = async (event: AgentEvent) => {
           try {
-            reply = structuredClone(
-              await model.complete(
-                structuredClone(history),
-                [...registry.values()].map(({ name, description, parameters }) => ({
-                  name,
-                  description,
-                  parameters: structuredClone(parameters),
-                })),
-                signal,
-                (delta) => {
-                  if (!acceptingDeltas || signal.aborted || typeof delta !== 'string' || !delta)
-                    return Promise.resolve();
-                  const event: AgentEvent = { type: 'assistant_delta', text: delta, step: steps };
-                  // Injected models may ignore the returned promise. Keep observation ordered anyway.
-                  deltaDelivery = deltaDelivery.then(() => emit(event));
-                  return deltaDelivery;
-                },
-              ),
-            );
-          } finally {
-            acceptingDeltas = false;
-            // Drain accepted callbacks before assistant/done, including failures and cancellation.
-            await deltaDelivery;
+            await options.onEvent?.(structuredClone(event));
+          } catch {
+            /* Observers never own execution. */
           }
+        };
+        const done = async (status: RunResult['status'], error?: string): Promise<RunResult> => {
+          const result: RunResult = { status, text, steps, ...(error ? { error } : {}) };
+          await emit({ type: 'done', ...result });
+          return result;
+        };
+        try {
           if (signal.aborted) return await done('cancelled');
-          const assistant = assistantMessage(reply);
-          const calls = assistant.tool_calls ?? [];
-          history.push(assistant);
-          text = reply.content ?? '';
-          await emit({ type: 'assistant', text, step: steps });
-          if (!calls.length) return await done(signal.aborted ? 'cancelled' : 'completed');
-          // Always append one ordered result per call, even when interrupted midway.
-          for (const call of calls) {
-            const name = call.function.name;
-            const result = await invokeTool(call, registry, signal, emit);
-            history.push({ role: 'tool', tool_call_id: call.id, content: result });
-            await emit({ type: 'tool_end', name, id: call.id, result });
+          history.push({ role: 'user', content: input });
+          while (steps < maxSteps) {
+            if (signal.aborted) return await done('cancelled');
+            await emit({ type: 'model_start', step: steps + 1 });
+            if (signal.aborted) return await done('cancelled');
+            steps++;
+            let acceptingDeltas = true;
+            let deltaDelivery = Promise.resolve();
+            let reply: Message;
+            try {
+              reply = structuredClone(
+                await model.complete(
+                  structuredClone(history),
+                  [...registry.values()].map(({ name, description, parameters }) => ({
+                    name,
+                    description,
+                    parameters: structuredClone(parameters),
+                  })),
+                  signal,
+                  (delta) => {
+                    if (!acceptingDeltas || signal.aborted || typeof delta !== 'string' || !delta)
+                      return Promise.resolve();
+                    const event: AgentEvent = { type: 'assistant_delta', text: delta, step: steps };
+                    // Injected models may ignore the returned promise. Keep observation ordered anyway.
+                    deltaDelivery = deltaDelivery.then(() => emit(event));
+                    return deltaDelivery;
+                  },
+                ),
+              );
+            } finally {
+              acceptingDeltas = false;
+              // Drain accepted callbacks before assistant/done, including failures and cancellation.
+              await deltaDelivery;
+            }
+            if (signal.aborted) return await done('cancelled');
+            const assistant = assistantMessage(reply);
+            const calls = assistant.tool_calls ?? [];
+            history.push(assistant);
+            text = reply.content ?? '';
+            await emit({ type: 'assistant', text, step: steps });
+            if (!calls.length) return await done(signal.aborted ? 'cancelled' : 'completed');
+            // Always append one ordered result per call, even when interrupted midway.
+            for (const call of calls) {
+              const name = call.function.name;
+              const result = await invokeTool(call, registry, signal, emit);
+              history.push({ role: 'tool', tool_call_id: call.id, content: result });
+              await emit({ type: 'tool_end', name, id: call.id, result });
+            }
+            if (signal.aborted) return await done('cancelled');
           }
-          if (signal.aborted) return await done('cancelled');
+          return await done('limit', `Reached maximum of ${maxSteps} model steps`);
+        } catch (error) {
+          return await done(signal.aborted ? 'cancelled' : 'blocked', errorText(error));
         }
-        return await done('limit', `Reached maximum of ${maxSteps} model steps`);
-      } catch (error) {
-        return await done(signal.aborted ? 'cancelled' : 'blocked', errorText(error));
       } finally {
         running = false;
       }
