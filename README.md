@@ -79,6 +79,36 @@ try {
 
 `createAgent` 接受任意实现通用契约的模型和工具，不依赖特定供应商、MCP 或 TUI。独立模块还包括 `pure-agent/session`、`pure-agent/tools/filesystem`、`pure-agent/tools/process`、`pure-agent/extensions/web`、`pure-agent/extensions/mcp`。
 
+## 请求上下文投影
+
+宿主可通过 `createAgent` 或 `createDeveloperAgent` 的 `projectContext` 选择每次模型请求的消息视图。省略时行为不变；它不修改原始会话历史，也不改变工具注册或宿主授权。下面的保留 system、只发送当前完整 turn 是示例策略，不是 core 强制要求：
+
+```ts
+import { createAgent } from 'pure-agent/core';
+import { createOpenAIModel } from 'pure-agent/providers/openai';
+
+const agent = createAgent({
+  model: createOpenAIModel({ apiKey: process.env.OPENAI_API_KEY }),
+  projectContext(messages, { signal, step }) {
+    signal.throwIfAborted();
+    const start = messages.findLastIndex((message) => message.role === 'user');
+    if (start < 0) return messages;
+    const system = messages[0]?.role === 'system' ? [messages[0]] : [];
+    return [...system, ...messages.slice(start)];
+  },
+});
+```
+
+回调可以同步或异步，收到独立副本和实时取消信号；`step` 从 1 开始，每次 `run` 重置。返回值也会再次复制，后续宿主修改不会改变已准备的模型请求。它必须是 JSON 兼容、符合现有消息协议的完整序列，尤其不得留下孤立、乱序或未完成的工具调用/结果。宿主可以替换 system、当前用户消息或整个合法上下文，不附加任务保留策略。
+
+Core 不解释 opaque `providerData`。保留供应商 assistant 消息时，宿主应遵守适配器的 continuation 契约；可见内容与 envelope 不一致可能被适配器拒绝。通用消息校验不保证任何模型都接受空消息、system-only 或 assistant 结尾等输入。
+
+投影失败返回 `blocked`，不会自动重试或启动该次模型请求；已完成工具结果仍留在原始历史中。取消是合作式的：回调应响应 `signal`，core 会等回调结束再释放运行锁。当前用户输入仍按原有 `run` 行为入历史，不因投影失败回滚。
+
+快照保存原始对话及实际 assistant/tool 结果，不保存回调或投影视图。恢复到新实例时由宿主重新配置投影；未配置则使用完整原始历史。这不是精确请求日志回放，也不自动提供 token 预算、压缩或工具重试。
+
+当前仅验证纯协议数据、静态检查和安装包类型契约；真实模型循环中的投影调用、取消与观察器隔离仍待真实 API 验收。
+
 ## 检查与验收
 
 ```bash

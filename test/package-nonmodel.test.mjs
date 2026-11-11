@@ -87,13 +87,18 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   const typedEntry = join(consumer, 'consumer.mts');
   writeFileSync(
     typedEntry,
-    `import type { Model, Tool } from 'pure-agent';
-     import type { Model as CoreModel } from 'pure-agent/core';
+    `import type { ContextProjector, Model, Tool } from 'pure-agent';
+     import type { ContextProjector as CoreProjector, Model as CoreModel } from 'pure-agent/core';
      import type { DeveloperAgentOptions } from 'pure-agent/runtime';
      import { createFileTools } from 'pure-agent/tools/filesystem';
      declare const model: Model;
      const sameContract: CoreModel = model;
-     const options: DeveloperAgentOptions = { model: sameContract, root: '.' };
+     const project: ContextProjector = (messages, { signal, step }) => {
+       signal.throwIfAborted();
+       return step > 0 ? messages : [];
+     };
+     const sameProjector: CoreProjector = project;
+     const options: DeveloperAgentOptions = { model: sameContract, root: '.', projectContext: sameProjector };
      const tools: Tool[] = createFileTools({ root: '.' });
      void options;
      void tools;`,

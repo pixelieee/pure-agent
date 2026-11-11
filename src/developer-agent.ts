@@ -1,5 +1,5 @@
 import { createAgent } from './core.ts';
-import type { Model, Tool } from './core.ts';
+import type { ContextProjector, Model, Tool } from './core.ts';
 import { createFileTools } from './tools/filesystem.ts';
 import { createProcessTools } from './tools/process.ts';
 
@@ -21,6 +21,8 @@ export interface DeveloperAgentOptions {
   root: string;
   system?: string;
   maxSteps?: number;
+  /** Optional host-owned view of model request history; does not change tool authorization. */
+  projectContext?: ContextProjector;
   /** Host-owned decision point for every tool call. Only true permits execution; omission denies all calls. */
   authorize?: (request: ToolAuthorization, context: { signal: AbortSignal }) => boolean | Promise<boolean>;
   /** Additional first-party or application tools, including connected MCP adapters. */
@@ -93,6 +95,7 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
           : DEVELOPER_SYSTEM,
       tools,
       maxSteps: options.maxSteps ?? 64,
+      projectContext: options.projectContext,
     });
     const run = agent.run.bind(agent);
     agent.run = (input, runOptions = {}) =>

@@ -57,11 +57,19 @@ export interface AgentSnapshot {
   messages: Message[];
 }
 
+/** Host-owned, request-only context transformation; never persisted or executed as a tool. */
+export type ContextProjector = (
+  messages: Message[],
+  context: { signal: AbortSignal; step: number },
+) => Message[] | Promise<Message[]>;
+
 export interface AgentOptions {
   model: Model;
   system?: string;
   tools?: Tool[];
   maxSteps?: number;
+  /** Transform detached request messages before each model step; stored history remains intact. */
+  projectContext?: ContextProjector;
 }
 
 function errorText(error: unknown): string {
@@ -252,9 +260,11 @@ async function invokeTool(
  * Observation hooks are isolated; failures cannot cause tool execution retries.
  * messages is a detached snapshot, so callers cannot corrupt the session.
  */
-export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentOptions) {
+export function createAgent({ model, system, tools = [], maxSteps = 12, projectContext }: AgentOptions) {
   if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) throw new Error('maxSteps must be a positive safe integer');
   if (!model || typeof model.complete !== 'function') throw new Error('A model.complete function is required');
+  if (projectContext !== undefined && typeof projectContext !== 'function')
+    throw new Error('projectContext must be a function');
   const registry = new Map<string, RegisteredTool>();
   for (const tool of tools) {
     if (!tool.name || registry.has(tool.name)) throw new Error(`Invalid or duplicate tool name: ${tool.name}`);
@@ -307,6 +317,17 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
           history.push({ role: 'user', content: input });
           while (steps < maxSteps) {
             if (signal.aborted) return await done('cancelled');
+            let projected: Message[] | undefined;
+            if (projectContext) {
+              const messages = await projectContext(structuredClone(history), { signal, step: steps + 1 });
+              if (signal.aborted) return await done('cancelled');
+              try {
+                // Validate tool pairing and detach again: the host may retain its returned array.
+                projected = validateAgentSnapshot({ version: 1, messages }).messages;
+              } catch {
+                throw new Error('Context projection must return a complete JSON-compatible message history');
+              }
+            }
             await emit({ type: 'model_start', step: steps + 1 });
             if (signal.aborted) return await done('cancelled');
             steps++;
@@ -315,7 +336,7 @@ export function createAgent({ model, system, tools = [], maxSteps = 12 }: AgentO
             let reply: Message;
             try {
               const response = await model.complete(
-                structuredClone(history),
+                projected ?? structuredClone(history),
                 [...registry.values()].map(({ name, description, parameters }) => ({
                   name,
                   description,

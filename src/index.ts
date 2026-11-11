@@ -1,6 +1,7 @@
 export { createAgent } from './core.ts';
 export type {
   AgentOptions,
+  ContextProjector,
   AgentEvent,
   Message,
   Model,
