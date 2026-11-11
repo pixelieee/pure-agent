@@ -22,6 +22,8 @@ export interface DeveloperAgentOptions {
   root: string;
   system?: string;
   maxSteps?: number;
+  /** Opt in to bounded execution of explicitly parallel-safe tools. Defaults to 1. */
+  maxToolConcurrency?: number;
   /** Optional host-owned view of model request history; does not change tool authorization. */
   projectContext?: ContextProjector;
   /** Optional host policy. Omission permits registered tools; when configured, only true permits each call. */
@@ -50,6 +52,7 @@ export function createDeveloperAgent(options: DeveloperAgentOptions) {
           : DEVELOPER_SYSTEM,
       tools,
       maxSteps: options.maxSteps ?? 64,
+      maxToolConcurrency: options.maxToolConcurrency,
       projectContext: options.projectContext,
     });
     const run = agent.run.bind(agent);

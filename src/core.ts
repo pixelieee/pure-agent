@@ -1,4 +1,4 @@
-import { compileParameters } from './schema.ts';
+import { executeToolCalls, registerTools, validateToolConcurrency } from './tool-execution.ts';
 
 /** One agent, one session, one bounded model/tool loop. No built-in capabilities. */
 export interface ToolCall {
@@ -20,6 +20,8 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
 }
 export interface Tool extends ToolDefinition {
+  /** Host promise that concurrent calls are safe. Omitted/false tools are serial barriers. */
+  parallelSafe?: boolean;
   /** Optional domain check, applied after mandatory JSON Schema validation. */
   validate?: (args: unknown) => boolean;
   // biome-ignore lint/suspicious/noExplicitAny: Agent invokes heterogeneous callbacks after JSON Schema and optional domain validation; direct callers own validation.
@@ -68,6 +70,8 @@ export interface AgentOptions {
   system?: string;
   tools?: Tool[];
   maxSteps?: number;
+  /** Maximum concurrent parallel-safe calls. Defaults to 1 (sequential compatibility). */
+  maxToolConcurrency?: number;
   /** Transform detached request messages before each model step; stored history remains intact. */
   projectContext?: ContextProjector;
 }
@@ -79,7 +83,6 @@ function errorText(error: unknown): string {
     return 'Unknown error';
   }
 }
-const toolError = (error: string): string => JSON.stringify({ ok: false, error });
 
 /** Validate untrusted provider output before committing it to the conversation. */
 function assistantMessage(reply: Message): Message {
@@ -219,60 +222,26 @@ export function validateAgentSnapshot(value: unknown): AgentSnapshot {
   return structuredClone(value) as AgentSnapshot;
 }
 
-interface RegisteredTool extends Tool {
-  validateSchema: (args: unknown) => void;
-}
-
-type Emit = (event: AgentEvent) => Promise<void>;
-
-/** A single tool invocation. Never retries, and always yields a protocol-safe result. */
-async function invokeTool(
-  call: ToolCall,
-  registry: Map<string, RegisteredTool>,
-  signal: AbortSignal,
-  emit: Emit,
-): Promise<string> {
-  if (signal.aborted) return toolError('Cancelled before execution');
-  const name = call.function.name;
-  try {
-    const tool = registry.get(name);
-    if (!tool) throw new Error(`Unknown tool: ${name}`);
-    const args: unknown = JSON.parse(call.function.arguments);
-    if (!args || typeof args !== 'object' || Array.isArray(args))
-      throw new Error('Tool arguments must be a JSON object');
-    tool.validateSchema(args);
-    if (tool.validate && tool.validate(structuredClone(args)) !== true)
-      throw new Error(`Invalid arguments for tool: ${name}`);
-    await emit({ type: 'tool_start', name, id: call.id, args });
-    if (signal.aborted) throw new Error('Cancelled before execution');
-    const value = await tool.execute(args, { signal });
-    const result = JSON.stringify(value ?? null);
-    if (typeof result !== 'string') throw new Error('Tool result is not JSON serializable');
-    return result;
-  } catch (error) {
-    return toolError(errorText(error));
-  }
-}
-
 /**
  * Cancellation is cooperative: injected models/tools must honor the signal.
  * We await an executing tool rather than detach a possibly still-running write.
  * Observation hooks are isolated; failures cannot cause tool execution retries.
  * messages is a detached snapshot, so callers cannot corrupt the session.
  */
-export function createAgent({ model, system, tools = [], maxSteps = 12, projectContext }: AgentOptions) {
+export function createAgent({
+  model,
+  system,
+  tools = [],
+  maxSteps = 12,
+  maxToolConcurrency = 1,
+  projectContext,
+}: AgentOptions) {
+  validateToolConcurrency(maxToolConcurrency);
   if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) throw new Error('maxSteps must be a positive safe integer');
   if (!model || typeof model.complete !== 'function') throw new Error('A model.complete function is required');
   if (projectContext !== undefined && typeof projectContext !== 'function')
     throw new Error('projectContext must be a function');
-  const registry = new Map<string, RegisteredTool>();
-  for (const tool of tools) {
-    if (!tool.name || registry.has(tool.name)) throw new Error(`Invalid or duplicate tool name: ${tool.name}`);
-    if (tool.validate !== undefined && typeof tool.validate !== 'function')
-      throw new Error(`Tool ${tool.name} requires a validate function`);
-    const parameters = structuredClone(tool.parameters);
-    registry.set(tool.name, { ...tool, parameters, validateSchema: compileParameters(parameters) });
-  }
+  const registry = registerTools(tools);
   let history: Message[] = system ? [{ role: 'system', content: system }] : [];
   let running = false;
   return {
@@ -366,12 +335,10 @@ export function createAgent({ model, system, tools = [], maxSteps = 12, projectC
             text = reply.content ?? '';
             await emit({ type: 'assistant', text, step: steps });
             if (!calls.length) return await done(signal.aborted ? 'cancelled' : 'completed');
-            // Always append one ordered result per call, even when interrupted midway.
-            for (const call of calls) {
-              const name = call.function.name;
-              const result = await invokeTool(call, registry, signal, emit);
-              history.push({ role: 'tool', tool_call_id: call.id, content: result });
-              await emit({ type: 'tool_end', name, id: call.id, result });
+            // Execution events follow completion; retained results always follow model order.
+            const results = await executeToolCalls(calls, registry, signal, emit, maxToolConcurrency);
+            for (const [index, call] of calls.entries()) {
+              history.push({ role: 'tool', tool_call_id: call.id, content: results[index] as string });
             }
             if (signal.aborted) return await done('cancelled');
           }
