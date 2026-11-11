@@ -36,3 +36,11 @@ export {
   RunJournalError,
 } from './run-journal.ts';
 export type { RunJournalFence, RunJournalRecord, RunJournalTransition, RunJournalStore } from './run-journal.ts';
+export {
+  createTaskRecord,
+  createTaskRecordStore,
+  validateTaskRecord,
+  reduceTaskRecord,
+  TaskError,
+} from './task-record.ts';
+export type { TaskRecord, TaskRecordStore, TaskStatus, TaskCleanup, TaskEvent, TaskTransition } from './task-record.ts';
