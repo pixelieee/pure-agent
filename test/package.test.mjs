@@ -94,25 +94,36 @@ test('private tarball installs as a JavaScript SDK and executable live-only CLI'
       import assert from 'node:assert/strict';
       import { createAgent } from 'pure-agent';
       import { createDeveloperAgent } from 'pure-agent/runtime';
-      import { readdir } from 'node:fs/promises';
+      import { readdir, readFile } from 'node:fs/promises';
       const agent = createAgent({ model: { complete: async () => ({ role: 'assistant', content: 'Installed SDK works' }) } });
       assert.equal((await agent.run('Hello')).text, 'Installed SDK works');
-      let calls = 0;
-      const runtime = createDeveloperAgent({
-        root: process.cwd(),
-        model: { complete: async () => calls++ === 0
-          ? { role: 'assistant', content: null, tool_calls: [{ id: 'write', type: 'function', function: {
-              name: 'write', arguments: JSON.stringify({ path: 'not-authorized.txt', content: 'sentinel' })
-            } }] }
-          : { role: 'assistant', content: 'Done' } },
-      });
-      try {
-        assert.equal((await runtime.agent.run('Attempt write without authorization')).status, 'completed');
-        const result = runtime.agent.messages.find((message) => message.role === 'tool');
-        assert.match(JSON.parse(result.content).error, /Permission denied/);
-        assert.ok(!(await readdir(process.cwd())).includes('not-authorized.txt'));
-      } finally {
-        await runtime.dispose();
+      for (const mode of ['omitted', 'undefined', 'approved', 'denied']) {
+        let calls = 0;
+        const filename = 'sdk-' + mode + '.txt';
+        const policy = mode === 'denied' ? { authorize: () => false }
+          : mode === 'approved' ? { authorize: () => true }
+          : mode === 'undefined' ? { authorize: undefined } : {};
+        const runtime = createDeveloperAgent({
+          root: process.cwd(), ...policy,
+          model: { complete: async () => calls++ === 0
+            ? { role: 'assistant', content: null, tool_calls: [{ id: 'write', type: 'function', function: {
+                name: 'write', arguments: JSON.stringify({ path: filename, content: 'sentinel' })
+              } }] }
+            : { role: 'assistant', content: 'Done' } },
+        });
+        try {
+          assert.equal((await runtime.agent.run('Exercise SDK policy')).status, 'completed');
+          const result = runtime.agent.messages.find((message) => message.role === 'tool');
+          if (mode === 'denied') {
+            assert.match(JSON.parse(result.content).error, /Permission denied/);
+            assert.ok(!(await readdir(process.cwd())).includes(filename));
+          } else {
+            assert.notEqual(JSON.parse(result.content).ok, false);
+            assert.equal(await readFile(filename, 'utf8'), 'sentinel');
+          }
+        } finally {
+          await runtime.dispose();
+        }
       }
       console.log('SDK smoke passed');
     `,
