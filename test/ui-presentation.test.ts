@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import type { Terminal, ProgramStatus } from '@earendil-works/pi-tui';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { PureAgentTUI } from '../src/ui/tui.ts';
@@ -158,4 +159,37 @@ test('accent tokens are desaturated truecolor and honor NO_COLOR and dumb termin
     if (term === undefined) delete process.env.TERM;
     else process.env.TERM = term;
   }
+});
+
+test('actual subprocess stderr remains accessible in minimal recorded tool details', (t) => {
+  const { terminal, ui, screen } = presentation();
+  t.after(() => ui.stop());
+  const script = "process.stderr.write('Actual subprocess diagnostic'); process.exitCode = 2;";
+  const executed = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 10_000, env: {} });
+  assert.ifError(executed.error);
+  assert.equal(executed.status, 2);
+  assert.equal(executed.stderr, 'Actual subprocess diagnostic');
+  // Plain recorded display data sourced from the real subprocess above, not an agent execution.
+  const source = JSON.stringify({
+    command: 'long display metadata '.repeat(40),
+    status: 'exited',
+    exitCode: executed.status,
+    output: executed.stderr,
+  });
+  assert.ok(source.indexOf('"output"') > 600);
+  ui.historyTool('exec_command', '{}', source);
+  assert.match(screen().join('\n'), /exec_command.*recorded: exit 2/);
+  assert.doesNotMatch(screen().join('\n'), /Actual subprocess diagnostic/);
+  terminal.input?.('\x0f');
+  assert.match(screen().join('\n'), /Actual subprocess diagnostic/);
+  terminal.input?.('\x0f');
+  terminal.columns = 24;
+  terminal.resize?.();
+  assert.doesNotMatch(screen().join('\n'), /Actual subprocess diagnostic/);
+  assert.ok(screen().every((line) => visibleWidth(line) <= 24));
+  terminal.columns = 100;
+  terminal.resize?.();
+  terminal.input?.('\x0f');
+  assert.match(screen().join('\n'), /Actual subprocess diagnostic/);
+  assert.equal(JSON.parse(source).output, executed.stderr);
 });
