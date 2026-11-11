@@ -15,6 +15,8 @@
 
 需要 Node.js >=24.2。安装依赖后，使用环境变量提供自己的 OpenAI API Key，不要提交密钥。
 
+也可用 `--credentials-file /private/location/pure.env` 显式读取凭据文件中的 `OPENAI_API_KEY`。进程环境优先，不自动发现文件，不应用文件中的其他环境设置。见 [凭据文件及安全边界](docs/credentials.md)。
+
 ```bash
 npm ci --ignore-scripts
 npm start -- --cwd ./your-project --trust-workspace

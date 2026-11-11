@@ -10,6 +10,7 @@ import { createWebFetchTool } from './extensions/web.ts';
 import { createDeveloperAgent, DEVELOPER_SYSTEM } from './developer-agent.ts';
 import { createSessionStore, SessionError, type SessionStore } from './session.ts';
 import { ConfigError, loadConfig, resolveConfig } from './config.ts';
+import { CredentialError, resolveOpenAIKey } from './credentials.ts';
 import { SessionController, interactive, type SessionPersistence, type SessionRuntime } from './ui/controller.ts';
 import { TerminalView, safeText } from './ui/view.ts';
 import { PureAgentTUI } from './ui/tui.ts';
@@ -27,6 +28,7 @@ Uses the live OpenAI provider. --openai is an optional compatibility flag.
 --trust-workspace        Allow file changes and commands with full host privileges
 --read-only              Deny tool writes/commands; explicitly enabled web reads allowed
 --config <path>          Explicit JSON settings (live mode only; no discovery)
+--credentials-file <path>  Explicit UTF-8 dotenv file; reads OPENAI_API_KEY only
 --model <id>             Live model (default gpt-5.6-luna)
 --reasoning <low|medium>  Live reasoning effort (default low)
 --max-steps <1..1000>     Model/tool loop limit (default 64)
@@ -38,7 +40,9 @@ Uses the live OpenAI provider. --openai is an optional compatibility flag.
 --mcp-config <path>      Explicit MCP {servers:[...]} JSON; requires --trust-workspace
 --prompt <text>          Run once; omit for interactive or piped lines
 
-Live mode reads OPENAI_API_KEY from the process environment only.
+Live mode uses OPENAI_API_KEY from the process environment, then --credentials-file.
+Env-file paths are relative to the launch directory, not --cwd. No auto-discovery.
+The file is always checked when supplied; an empty environment key is an error.
 Files are workspace-contained. Commands are NOT sandboxed: they can access
 outside the workspace with your host privileges. Only trust projects you trust.
 Noninteractive/piped use requires --trust-workspace or --read-only.
@@ -113,6 +117,7 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
   let model: string | undefined;
   let reasoning: 'low' | 'medium' | undefined;
   let configPath: string | undefined;
+  let envFile: string | undefined;
   let cwd: string | undefined;
   let sessionPath: string | undefined;
   let requireSession = false;
@@ -127,6 +132,7 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
     '--model',
     '--reasoning',
     '--config',
+    '--credentials-file',
     '--cwd',
     '--session',
     '--resume',
@@ -149,7 +155,10 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
       if (flag === '--prompt') prompt = value;
       else {
         if (flag === '--config') configPath = value;
-        else if (flag === '--mcp-config') mcpConfig = value;
+        else if (flag === '--credentials-file') {
+          if (envFile !== undefined) return invalid();
+          envFile = value;
+        } else if (flag === '--mcp-config') mcpConfig = value;
         else if (flag === '--model') model = value;
         else if (flag === '--cwd') cwd = value;
         else if (flag === '--session' || flag === '--resume') {
@@ -185,8 +194,11 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
   const interactiveTerminal = prompt === undefined && !!process.stdin.isTTY && !!process.stdout.isTTY;
   const useTui = interactiveTerminal && process.env.TERM !== 'dumb';
   let root = resolve(cwd ?? options.projectRoot ?? process.cwd());
-  if (!(options.env ?? process.env).OPENAI_API_KEY?.trim()) {
-    process.stderr.write('OPENAI_API_KEY is required for the live provider.\n');
+  let apiKey: string;
+  try {
+    apiKey = await resolveOpenAIKey(options.env ?? process.env, envFile);
+  } catch (error) {
+    process.stderr.write(`${error instanceof CredentialError ? error.message : 'Could not resolve credentials.'}\n`);
     return 2;
   }
   try {
@@ -239,8 +251,6 @@ export async function main(args = process.argv.slice(2), options: CLIOptions = {
   }
   const readTools = new Set(['read', 'ls', 'find', 'grep', ...(webFetch ? ['web_fetch'] : [])]);
   const factory = (system: string): SessionRuntime => {
-    const apiKey = (options.env ?? process.env).OPENAI_API_KEY;
-    if (!apiKey) throw new Error('OPENAI_API_KEY is required for the live provider.');
     return createDeveloperAgent({
       model: (options.modelFactory ?? createOpenAIModel)({
         apiKey,
