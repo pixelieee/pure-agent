@@ -423,3 +423,155 @@ test('gitignore discovery is case-sensitive on case-sensitive platforms', {
   await put('b.LOG', 'visible');
   assert.deepEqual((await run('find', { pattern: '*.*' })).files, ['.gitignore', 'b.LOG']);
 });
+
+test('grep directory results use workspace paths that can be read without prefixing the search root', async (t) => {
+  const { run, put, root } = await fixture(t);
+  await put('main.ts', 'different root file\n');
+  await put('src/main.ts', 'needle main\n');
+  await put('src/nested/helper.ts', 'needle helper\n');
+  for (const path of ['src', './src/', join(root, 'src')]) {
+    const search = await run('grep', { path, pattern: 'needle' });
+    assert.equal(search.path, 'src');
+    assert.deepEqual(
+      search.matches.map((match: { path: string }) => match.path),
+      ['src/main.ts', 'src/nested/helper.ts'],
+    );
+    for (const match of search.matches) {
+      assert.equal((await run('read', { path: match.path })).content.trim(), match.content);
+    }
+  }
+  assert.equal((await run('grep', { path: 'src/main.ts', pattern: 'needle' })).matches[0].path, 'src/main.ts');
+  assert.deepEqual(
+    (await run('grep', { pattern: 'needle' })).matches.map((match: { path: string }) => match.path),
+    ['src/main.ts', 'src/nested/helper.ts'],
+  );
+});
+
+test('grep workspace result paths preserve search-relative glob filtering and pagination', async (t) => {
+  const { run, put } = await fixture(t);
+  await put('src/main.ts', 'needle main\n');
+  await put('src/nested/a.ts', 'needle a\nneedle a again\n');
+  await put('src/nested/b.ts', 'needle b\n');
+  const args = { path: 'src', pattern: 'needle', glob: 'nested/*.ts', limit: 2 };
+  const first = await run('grep', args);
+  assert.deepEqual(
+    first.matches.map((match: { path: string; line: number }) => [match.path, match.line]),
+    [
+      ['src/nested/a.ts', 1],
+      ['src/nested/a.ts', 2],
+    ],
+  );
+  assert.equal(first.truncated, true);
+  assert.equal(first.nextOffset, 2);
+  const last = await run('grep', { ...args, offset: first.nextOffset });
+  assert.deepEqual(
+    last.matches.map((match: { path: string; line: number }) => [match.path, match.line]),
+    [['src/nested/b.ts', 1]],
+  );
+  assert.equal(last.truncated, false);
+  assert.deepEqual((await run('grep', { ...args, glob: 'src/nested/*.ts' })).matches, []);
+  assert.deepEqual((await run('find', { path: 'src', pattern: 'nested/*.ts' })).files, ['nested/a.ts', 'nested/b.ts']);
+  assert.deepEqual((await run('ls', { path: 'src' })).entries, [
+    { name: 'main.ts', type: 'file' },
+    { name: 'nested', type: 'directory' },
+  ]);
+});
+
+test('optional discovery paths treat omission, empty string and dot as the same workspace root', async (t) => {
+  const { run, put, root, tool } = await fixture(t);
+  await put('a.txt', 'needle\n');
+  await put('nested/b.txt', 'needle\n');
+  for (const [name, args] of [
+    ['find', { pattern: '*.txt' }],
+    ['ls', {}],
+    ['grep', { pattern: 'needle' }],
+  ] as const) {
+    const expected = await run(name, { ...args, path: '.' });
+    for (const path of [undefined, '', '.', './', root]) {
+      const input = Object.freeze(path === undefined ? { ...args } : { ...args, path });
+      const before = structuredClone(input);
+      assert.equal(tool(name).validate?.(input), true, `${name}: ${JSON.stringify(input)}`);
+      assert.deepEqual(await run(name, input), expected);
+      assert.deepEqual(input, before);
+    }
+  }
+});
+
+test('only optional discovery paths accept empty strings; invalid types and required paths stay invalid', async (t) => {
+  const { run, tool, put, root } = await fixture(t);
+  await put('sentinel.txt', 'unchanged');
+  for (const [name, args] of [
+    ['read', {}],
+    ['write', { content: 'changed' }],
+    ['edit', { edits: [{ oldText: 'unchanged', newText: 'changed' }] }],
+    ['find', { pattern: '*' }],
+    ['ls', {}],
+    ['grep', { pattern: 'unchanged' }],
+  ] as const) {
+    const invalidPaths: unknown[] = [null, false, 0, [], {}, 'x'.repeat(4097)];
+    if (['read', 'write', 'edit'].includes(name)) invalidPaths.push('', undefined);
+    for (const path of invalidPaths) {
+      const input = path === undefined ? { ...args } : { ...args, path };
+      assert.equal(tool(name).validate?.(input), false, `${name} must reject invalid path`);
+      await assert.rejects(run(name, input), /Invalid tool arguments/u);
+    }
+  }
+  assert.equal(await readFile(join(root, 'sentinel.txt'), 'utf8'), 'unchanged');
+  assert.deepEqual(await readdir(root), ['sentinel.txt']);
+});
+
+test('optional root defaults do not trim paths or bypass traversal, symlink, NUL and exclusion checks', async (t) => {
+  const { run, put, root } = await fixture(t);
+  const outside = await mkdtemp(join(tmpdir(), 'pure-discovery-outside-'));
+  t.after(() => rm(outside, { recursive: true, force: true }));
+  await writeFile(join(outside, 'sentinel.txt'), 'outside');
+  await symlink(outside, join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+  await put(' leading/space.txt', 'needle');
+  for (const [name, args] of [
+    ['find', { pattern: '*.txt' }],
+    ['ls', {}],
+    ['grep', { pattern: 'needle' }],
+  ] as const) {
+    assert.equal((await run(name, { ...args, path: ' leading' })).path, ' leading');
+    await assert.rejects(run(name, { ...args, path: ' ' }));
+    for (const [path, error] of [
+      ['..', /outside/u],
+      [outside, /outside/u],
+      ['escape', /outside/u],
+      ['\0', /nonempty path/u],
+      ['.env', /excluded/u],
+    ] as const) {
+      await assert.rejects(run(name, { ...args, path }), error);
+    }
+  }
+  assert.equal(await readFile(join(outside, 'sentinel.txt'), 'utf8'), 'outside');
+});
+
+test('grep budgets complete workspace paths and paginates without losing matches', async (t) => {
+  const directory = 'nested-prefix-'.repeat(10);
+  const { root, run, put } = await fixture(t, { maxReadBytes: 250 });
+  await put(`${directory}/a.txt`, 'hit\nhit\nhit\n');
+  const observed: number[] = [];
+  let offset = 0;
+  for (;;) {
+    const page = await run('grep', { path: directory, pattern: 'hit', offset });
+    assert.equal(page.matches.length, 1);
+    assert.ok(
+      page.matches.reduce((bytes: number, match: unknown) => bytes + Buffer.byteLength(JSON.stringify(match)), 0) <=
+        250,
+    );
+    assert.equal(page.matches[0].path, `${directory}/a.txt`);
+    observed.push(page.matches[0].line);
+    if (!page.truncated) break;
+    assert.equal(page.nextOffset, offset + 1);
+    offset = page.nextOffset;
+    assert.ok(offset < 4);
+  }
+  assert.deepEqual(observed, [1, 2, 3]);
+  const small = createFileTools({ root, maxReadBytes: 100 }).find((tool) => tool.name === 'grep');
+  assert.ok(small);
+  await assert.rejects(
+    small.execute({ path: directory, pattern: 'hit' }, context()),
+    /One match.*exceeds maxReadBytes/u,
+  );
+});
