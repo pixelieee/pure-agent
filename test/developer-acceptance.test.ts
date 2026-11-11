@@ -650,3 +650,81 @@ test('independent product policy: caller mutations cannot change the authorizati
   assert.deepEqual(decisions, [root]);
   assert.deepEqual(await readdir(root), []);
 });
+
+test('optional root paths reach authorization as originally validated, without argument normalization', async (t) => {
+  const { root } = await workspace(t);
+  await writeFile(join(root, 'sentinel.txt'), 'needle');
+  const calls: { name: string; args: { path?: string; pattern?: string } }[] = [];
+  for (const name of ['find', 'ls', 'grep']) {
+    for (const path of [undefined, '', '.', './']) {
+      const args = { ...(name === 'ls' ? {} : { pattern: name === 'find' ? '*.txt' : 'needle' }) };
+      calls.push({ name, args: path === undefined ? args : { ...args, path } });
+    }
+  }
+  const invalid = [
+    call('find', { path: null, pattern: '*' }, 'bad-find'),
+    call('ls', { path: false }, 'bad-ls'),
+    call('grep', { path: 0, pattern: 'needle' }, 'bad-grep'),
+    call('read', { path: '' }, 'bad-read'),
+    call('write', { path: '', content: 'changed' }, 'bad-write'),
+    call('edit', { path: '', edits: [{ oldText: 'needle', newText: 'changed' }] }, 'bad-edit'),
+  ];
+  const seen: { name: string; args: unknown }[] = [];
+  let step = 0;
+  const runtime = createDeveloperAgent({
+    root,
+    authorize: ({ name, args }) => {
+      seen.push({ name, args: structuredClone(args) });
+      return true;
+    },
+    model: {
+      async complete(messages) {
+        if (step++ === 0) return reply(...calls.map(({ name, args }, i) => call(name, args, `ok-${i}`)), ...invalid);
+        for (let i = 0; i < calls.length; i++) {
+          const payload = result<{ path: string; error?: string }>(messages, `ok-${i}`);
+          assert.equal(payload.error, undefined);
+          assert.equal(payload.path, '.');
+        }
+        for (const { id } of invalid) {
+          const payload = result<{ ok: boolean; error: string }>(messages, id);
+          assert.equal(payload.ok, false);
+          assert.match(payload.error, /Invalid tool arguments/u);
+        }
+        return final();
+      },
+    },
+  });
+  t.after(() => runtime.dispose());
+  const completed = await runtime.agent.run('Search the fixture using equivalent root paths.');
+  assert.equal(completed.status, 'completed', completed.error);
+  assert.deepEqual(seen, calls);
+  assert.equal(await readFile(join(root, 'sentinel.txt'), 'utf8'), 'needle');
+});
+
+test('host authorization can distinguish and deny an empty discovery path', async (t) => {
+  const { root } = await workspace(t);
+  await writeFile(join(root, 'sentinel.txt'), 'needle');
+  const seen: unknown[] = [];
+  let step = 0;
+  const runtime = createDeveloperAgent({
+    root,
+    authorize: ({ args }) => {
+      seen.push(structuredClone(args));
+      return !Object.hasOwn(args as object, 'path');
+    },
+    model: {
+      async complete(messages) {
+        if (step++ === 0) return reply(call('ls', {}, 'omitted'), call('ls', { path: '' }, 'empty'));
+        assert.equal(result<{ path: string }>(messages, 'omitted').path, '.');
+        const denied = result<{ ok: boolean; error: string; entries?: unknown }>(messages, 'empty');
+        assert.equal(denied.ok, false);
+        assert.match(denied.error, /Permission denied/u);
+        assert.equal(denied.entries, undefined);
+        return final();
+      },
+    },
+  });
+  t.after(() => runtime.dispose());
+  assert.equal((await runtime.agent.run('Inspect only explicitly authorized discovery calls.')).status, 'completed');
+  assert.deepEqual(seen, [{}, { path: '' }]);
+});

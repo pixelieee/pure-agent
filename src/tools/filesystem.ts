@@ -29,12 +29,14 @@ export interface EditFileInput {
 }
 export interface FindFilesInput {
   pattern: string;
+  /** Omitted, empty or dot selects the workspace root. */
   path?: string;
   /** 0-based result offset. */
   offset?: number;
   limit?: number;
 }
 export interface ListFilesInput {
+  /** Omitted, empty or dot selects the workspace root. */
   path?: string;
   offset?: number;
   limit?: number;
@@ -53,9 +55,14 @@ const pathSchema = {
   maxLength: 4096,
   description: 'Workspace-relative or contained absolute path',
 };
+const optionalPathSchema = {
+  ...pathSchema,
+  minLength: 0,
+  description: 'Workspace-relative or contained absolute path; omitted, empty or dot means workspace root',
+};
 const hashSchema = { type: 'string', pattern: '^[a-f0-9]{64}$', description: 'Expected SHA-256, from a complete read' };
 const pageSchema = {
-  path: pathSchema,
+  path: optionalPathSchema,
   offset: { type: 'integer', minimum: 0, description: 'Zero-based result offset, default 0' },
   limit: { type: 'integer', minimum: 1, description: 'Maximum records in this page' },
 };
@@ -329,7 +336,7 @@ export function createFileTools(options: FileToolsOptions): Tool[] {
         'pattern',
       ]),
       async execute(input: FindFilesInput, { signal }) {
-        const path = await workspace.resolvePath(input.path ?? '.', signal);
+        const path = await workspace.resolvePath(input.path || '.', signal);
         const walk = await workspace.walk(path, signal);
         const matches = globMatcher(input.pattern);
         const files = walk.entries
@@ -357,7 +364,7 @@ export function createFileTools(options: FileToolsOptions): Tool[] {
         'List immediate workspace directory entries, including hidden project files, with file/directory/symlink types. Respects ignore and credential exclusions. Sorted, bounded and paginated with zero-based offsets. Symlinks are listed but not followed.',
       parameters: objectSchema(pageSchema),
       async execute(input: ListFilesInput, { signal }) {
-        const path = await workspace.resolvePath(input.path ?? '.', signal);
+        const path = await workspace.resolvePath(input.path || '.', signal);
         const walk = await workspace.walk(path, signal, false);
         const entries = walk.entries.map((item) => ({ name: item.relativePath, type: item.type }));
         const result = page(
@@ -378,7 +385,7 @@ export function createFileTools(options: FileToolsOptions): Tool[] {
     {
       name: 'grep',
       description:
-        'Search UTF-8 workspace files by JavaScript regular expression or literal text. Returns matching lines with paths and line numbers. Respects .gitignore and .ignore, skips binary/oversize files and symlinks. Results and traversal are bounded; nextOffset continues matching lines. Patterns run in a cancellable worker.',
+        'Search UTF-8 workspace files by JavaScript regular expression or literal text. Returns matching lines with workspace-relative paths and line numbers. Respects .gitignore and .ignore, skips binary/oversize files and symlinks. Results and traversal are bounded; nextOffset continues matching lines. Patterns run in a cancellable worker.',
       parameters: objectSchema(
         {
           ...pageSchema,
@@ -391,7 +398,7 @@ export function createFileTools(options: FileToolsOptions): Tool[] {
         ['pattern'],
       ),
       async execute(input: GrepFilesInput, { signal }) {
-        const path = await workspace.resolvePath(input.path ?? '.', signal);
+        const path = await workspace.resolvePath(input.path || '.', signal);
         const info = await lstat(path);
         const walk = info.isDirectory()
           ? await workspace.walk(path, signal)
@@ -459,8 +466,9 @@ export function createFileTools(options: FileToolsOptions): Tool[] {
               signal,
             );
             seen += result.total;
+            const matchPath = await workspace.displayPath(file.path);
             for (const item of result.matches) {
-              const match = { path: file.relativePath, ...item };
+              const match = { path: matchPath, ...item };
               const size = Buffer.byteLength(JSON.stringify(match));
               if (matches.length >= limit || bytes + size > workspace.limits.maxReadBytes) {
                 if (!matches.length)
