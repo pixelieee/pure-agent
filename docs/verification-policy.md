@@ -14,7 +14,7 @@ npm run test:package:nonmodel
 首次安装需要依赖源访问；已有完整 npm 缓存时可用 `npm ci --offline --ignore-scripts`。缓存路径通过 `npm_config_cache` 指定，不改变锁定依赖或生命周期限制。
 
 - `check:static`：完整现有 Biome 质量范围、严格类型检查和构建。扫描历史测试源码但不执行它们；不放宽规则。
-- `test:nonmodel`：固定列表仅含原有 `test/filesystem.test.ts` 和新增 `test/verification-entrypoints.test.mjs`，没有通配符。前者直接调用真实文件工具、临时文件和搜索 worker，依赖 schema、filesystem-internal、filesystem-search，不创建 agent 或模型；原有断言不变。后者先核对默认命令及前后置钩子，再检查明确拒绝入口。
+- `test:nonmodel`：固定列表仅含原有 `test/filesystem.test.ts` 、`test/verification-entrypoints.test.mjs` 和 `test/credentials.test.ts`，没有通配符。前者直接调用真实文件工具、临时文件和搜索 worker，依赖 schema、filesystem-internal、filesystem-search，不创建 agent 或模型；原有断言不变。拒绝入口检查先核对默认命令及前后置钩子，再检查明确拒绝入口。凭据检查只使用明确无效的测试字符串、真实临时文件和 CLI 失败前置路径，不创建模型、不调用 API。
 - `test:package:nonmodel`：构建并打包，独立 consumer 按锁文件运行时依赖图执行 `npm ci --offline --ignore-scripts`，核对版本、真实导出导入、消费者类型声明编译和两个 CLI 的 `--help`。不实例化或调用模型；类型探针只编译不执行。缓存缺失、安装失败或超时即失败。
 
 这只是有限的文件工具、安装、入口和类型检查，不是完整 UT/IT/E2E、模型协议、任务执行或真实 API 验收。扩大列表前必须审查文件及传递依赖；不能为了提高数量加入模型替身。

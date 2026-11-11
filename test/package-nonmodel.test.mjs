@@ -122,5 +122,6 @@ test('installed package exports and CLI preflight work without a model', (t) => 
   const alias = run([npmCli, 'run', '--silent', 'preflight:alias'], consumer);
   assert.equal(primary, alias);
   assert.match(primary, /OPENAI_API_KEY/);
+  assert.match(primary, /--credentials-file/);
   assert.match(primary, /Commands are NOT sandboxed/);
 });
