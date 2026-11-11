@@ -36,3 +36,8 @@ Every outcome, including `completed` and `cancelled`, leaves resources **unknown
 ## Evidence limits
 
 The fixed non-model allowlist includes `run-journal.test.ts`: pure reducer/storage fixtures, actual private temporary files, direct production checkpoint callback/storage integration, an owned child killed before a real rename after a real file effect, and a real post-rename directory-sync fault. These are component and local filesystem checks, not Agent-loop E2E, power-loss, resource-cleanup, Windows or real-provider acceptance. Runtime-model checkpoint ordering remains separately pending.
+
+The filesystem implementation is shared internally as `private-record-store.ts`.
+The run-journal adapter still owns schema validation, detached inputs and sanitized
+`RunJournalError` codes; its public file format and recovery policy are unchanged.
+The shared primitive does not add a registry, lifecycle lock or multi-file transaction.

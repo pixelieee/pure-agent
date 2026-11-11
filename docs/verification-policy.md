@@ -61,3 +61,7 @@ requires static review and later real API acceptance.
 It exercises the per-run reducer, actual temporary filesystem, direct checkpoint/storage callback boundary,
 and owned child-process crash/sync-failure boundaries. It creates no model or HTTP model substitute.
 See [per-run journal limits](run-journal.md); runtime-model and power-loss acceptance remain pending.
+
+`test/private-record-store.test.ts` independently exercises the shared filesystem
+primitive with an overflowing reducer result and a retained result mutated after
+return. Invalid derived data must never replace the previous valid durable bytes.

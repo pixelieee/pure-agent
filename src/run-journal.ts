@@ -1,8 +1,6 @@
 import { types } from 'node:util';
-import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
-import { lstat, open, rename, unlink } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { createPrivateRecordStore, PrivateRecordError, recordCodeIs as codeIs } from './private-record-store.ts';
+import type { PrivateRecordStore } from './private-record-store.ts';
 import type { AgentCheckpoint } from './checkpoint.ts';
 import { validateAgentSnapshot } from './core.ts';
 import type { AgentSnapshot, RunResult } from './core.ts';
@@ -38,11 +36,6 @@ export class RunJournalError extends Error {
 function fail(code: string): never {
   throw new RunJournalError(code);
 }
-const codeIs = (error: unknown, code: string) =>
-  !!error &&
-  typeof error === 'object' &&
-  !types.isProxy(error) &&
-  Object.getOwnPropertyDescriptor(error, 'code')?.value === code;
 const phases: Phase[] = [
   'accepted',
   'before_model',
@@ -93,7 +86,8 @@ const safeCodes = new Set([
 function safeError(error: unknown): never {
   if (error && typeof error === 'object' && !types.isProxy(error)) {
     const code = Object.getOwnPropertyDescriptor(error, 'code')?.value;
-    if (error instanceof RunJournalError && safeCodes.has(code)) return fail(code);
+    if ((error instanceof RunJournalError || error instanceof PrivateRecordError) && safeCodes.has(code))
+      return fail(code);
   }
   if (codeIs(error, 'ENOENT')) return fail('NOT_FOUND');
   if (codeIs(error, 'EACCES') || codeIs(error, 'EPERM')) return fail('PERMISSIONS');
@@ -325,168 +319,30 @@ export interface RunJournalStore {
 export function createRunJournalStore(options: { path: string; maxBytes?: number }): RunJournalStore {
   plainData(options);
   object(options, ['path', 'maxBytes']);
-  if (process.platform !== 'linux') return fail('PLATFORM');
-  if (!options || typeof options.path !== 'string' || !isAbsolute(options.path) || options.path.includes('\0'))
-    return fail('PATH');
-  const path = resolve(options.path);
-  const parent = dirname(path);
-  const maxBytes = options.maxBytes ?? 16 * 1024 * 1024;
-  if (!positive(maxBytes) || maxBytes > 256 * 1024 * 1024) return fail('SIZE');
-  async function directory() {
-    let part = parent;
-    while (true) {
-      const stat = await lstat(part);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) return fail('UNSAFE_PATH');
-      if (part === parent && ((stat.mode & 0o777) !== 0o700 || stat.uid !== process.getuid?.()))
-        return fail('PERMISSIONS');
-      if (dirname(part) === part) break;
-      part = dirname(part);
-    }
-    const handle = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try {
-      const before = await lstat(parent);
-      const after = await handle.stat();
-      if (before.ino !== after.ino || before.dev !== after.dev) return fail('UNSAFE_PATH');
-      if ((after.mode & 0o777) !== 0o700 || after.uid !== process.getuid?.()) return fail('PERMISSIONS');
-      return handle;
-    } catch (error) {
-      await handle.close();
-      throw error;
-    }
-  }
-  async function read(): Promise<RunJournalRecord> {
-    const before = await lstat(path);
-    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) return fail('UNSAFE_PATH');
-    if ((before.mode & 0o777) !== 0o600 || before.uid !== process.getuid?.()) return fail('PERMISSIONS');
-    const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    try {
-      const stat = await handle.stat();
-      if (!stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev) return fail('UNSAFE_PATH');
-      if (stat.size > maxBytes) return fail('SIZE');
-      const bytes = Buffer.alloc(stat.size + 1);
-      let size = 0;
-      while (size < bytes.length) {
-        const result = await handle.read(bytes, size, bytes.length - size, size);
-        if (!result.bytesRead) break;
-        size += result.bytesRead;
-      }
-      if (size !== stat.size) return fail('CORRUPT');
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, size)));
-      } catch {
-        return fail('CORRUPT');
-      }
-      return validateRunJournal(parsed);
-    } finally {
-      await handle.close();
-    }
-  }
-  async function write(
-    initial: RunJournalRecord | undefined,
-    fence?: RunJournalFence,
-    transition?: RunJournalTransition,
-  ): Promise<RunJournalRecord> {
-    const dir = await directory();
-    let locked = false;
-    let temporary: string | undefined;
-    let commitStarted = false;
-    let result: RunJournalRecord | undefined;
-    let failure: unknown;
-    try {
-      const lock = await open(
-        `${path}.lock`,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o600,
-      ).catch((error: unknown) => {
-        if (codeIs(error, 'EEXIST')) return fail('LOCKED');
-        throw error;
-      });
-      locked = true;
-      try {
-        await lock.chmod(0o600);
-      } finally {
-        await lock.close();
-      }
-      await dir.sync();
-      let current: RunJournalRecord | undefined;
-      try {
-        current = await read();
-      } catch (error) {
-        if (!codeIs(error, 'ENOENT')) throw error;
-      }
-      if (initial) {
-        if (current) return fail('EXISTS');
-        result = initial;
-      } else {
-        if (!current || !fence || !transition) return fail('CONFLICT');
-        result = reduceRunJournal(current, fence, transition);
-      }
-      const body = `${JSON.stringify(result)}\n`;
-      if (Buffer.byteLength(body) > maxBytes) return fail('SIZE');
-      temporary = join(parent, `.${basename(path)}.${randomUUID()}.tmp`);
-      const file = await open(
-        temporary,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-        0o600,
-      );
-      try {
-        await file.chmod(0o600);
-        await file.writeFile(body, 'utf8');
-        await file.sync();
-      } finally {
-        await file.close();
-      }
-      commitStarted = true;
-      await rename(temporary, path);
-      temporary = undefined;
-      await dir.sync();
-    } catch (error) {
-      failure = error;
-    }
-    try {
-      if (temporary) await unlink(temporary);
-      if (locked) {
-        await unlink(`${path}.lock`);
-        await dir.sync();
-      }
-    } catch (error) {
-      failure ??= error;
-    }
-    try {
-      await dir.close();
-    } catch (error) {
-      failure ??= error;
-    }
-    if (failure) {
-      if (commitStarted) return fail('COMMIT_UNCERTAIN');
-      throw failure;
-    }
-    return validateRunJournal(result);
-  }
-  return {
-    path,
-    load: () =>
-      guarded(async () => {
-        const dir = await directory();
-        try {
-          return await read();
-        } finally {
-          await dir.close();
-        }
-      }),
-    create: (value) =>
-      guarded(async () => {
+  let store: PrivateRecordStore<RunJournalRecord, RunJournalFence, RunJournalTransition>;
+  try {
+    store = createPrivateRecordStore(options, {
+      validate: validateRunJournal,
+      initial: (value) => {
         const initial = validateRunJournal(value);
         if (initial.phase !== 'accepted' || initial.revision !== 1) return fail('INVALID');
-        return write(initial);
-      }),
+        return initial;
+      },
+      reduce: reduceRunJournal,
+    });
+  } catch (error) {
+    return safeError(error);
+  }
+  return {
+    path: store.path,
+    load: () => guarded(() => store.load()),
+    create: (value) => guarded(() => store.create(value)),
     transition: (fence, transition) =>
       guarded(async () => {
         // Validate before cloning: structuredClone can invoke getters and silently drop fields.
         plainData(fence);
         plainData(transition);
-        return write(undefined, { ...fence }, structuredClone(transition));
+        return store.transition({ ...fence }, structuredClone(transition));
       }),
   };
 }
