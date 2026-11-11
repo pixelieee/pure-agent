@@ -1,6 +1,7 @@
 import type { AgentEvent, RunResult } from '../core.ts';
 import { stripVTControlCharacters } from 'node:util';
 import stringWidth from 'string-width';
+import { deco } from './theme.ts';
 
 export interface Output {
   write(text: string): unknown;
@@ -48,6 +49,10 @@ export interface SessionView {
   panel(kind: PanelKind, content: unknown): void;
   event(event: AgentEvent, modeLabel?: string): void;
   finish(result: RunResult): void;
+  /** Optional interactive status, separate from append-only transcript content. */
+  setStatus?(status: string): void;
+  /** End interrupted rendering after a thrown run error, without inventing a RunResult. */
+  runError?(error: string): void;
   /** Display a recorded tool call and result without presenting them as live execution. */
   historyTool?(name: string, args: string, result: string): void;
   reset?(): void;
@@ -68,19 +73,15 @@ export class TerminalView implements SessionView {
       this.output.write(`[${kind}] ${text}\n`);
       return;
     }
-    const accent = kind === 'ERROR' ? '38;2;190;63;68' : '38;2;226;177;91';
-    const paint = (value: string, tone = accent) => `\x1b[48;2;15;17;25m\x1b[${tone}m${value}\x1b[0m`;
-    this.output.write(paint(`┏━ ${kind} ${'━'.repeat(Math.max(0, width - kind.length - 5))}┓`) + '\n');
-    for (const line of wrapText(text, width - 4)) {
-      const length = stringWidth(line);
+    const marker = kind === 'USER' ? '› ' : kind === 'ERROR' ? '! ' : '';
+    const lines = wrapText(text, Math.max(1, width - stringWidth(marker)));
+    for (const [index, line] of lines.entries()) {
+      const prefix = index === 0 ? marker : ' '.repeat(stringWidth(marker));
+      const body = `${prefix}${line}`;
       this.output.write(
-        paint('┃ ') +
-          paint(line + ' '.repeat(Math.max(0, width - 4 - length)), '38;2;237;229;209') +
-          paint(' ┃') +
-          '\n',
+        `${kind === 'USER' ? deco.band(body + ' '.repeat(Math.max(0, width - stringWidth(body)))) : body}\n`,
       );
     }
-    this.output.write(paint(`┗${'━'.repeat(width - 2)}┛`) + '\n');
   }
   historyTool(name: string, args: string, result: string) {
     this.panel(
@@ -107,7 +108,7 @@ export class TerminalView implements SessionView {
   welcome(note = '') {
     this.panel(
       'STATUS',
-      `PURE AGENT / ISSUE 001\nDARK DECO${note ? `\n${note}` : ''}\n/help for commands · Ctrl+C cancels; when idle, exits.`,
+      `pure agent${note ? `\n${note}` : ''}\n/help for commands · Ctrl+C cancels; when idle, exits.`,
     );
   }
 }

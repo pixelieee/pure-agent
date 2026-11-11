@@ -25,6 +25,17 @@ export interface SessionOptions {
 }
 type SessionFactory = (system: string) => Agent | SessionRuntime;
 const runtime = (value: Agent | SessionRuntime): SessionRuntime => ('agent' in value ? value : { agent: value });
+const noSessionFile = new Error('No session file selected. Use /save <file>.');
+const operationFailure = {
+  save: 'Session save failed. History remains available in this session.',
+  restore: 'Session restore failed. Check the selected file and try again.',
+  reset: 'Session reset failed. Check the session and try again.',
+} as const;
+const operationStatus = {
+  save: ['saving session · please wait', 'ready · session saved', 'save failed · retry /save'],
+  restore: ['restoring session · please wait', 'ready · restored session', 'restore failed · check error'],
+  reset: ['resetting session · please wait', 'ready · new session', 'session reset failed · check error'],
+} as const;
 
 /** Owns the current runtime, including process cleanup and idle-only persistence. */
 export class SessionController {
@@ -75,12 +86,15 @@ export class SessionController {
   get busy() {
     return !!this.abort || this.operating;
   }
+  get cancellable() {
+    return !!this.abort && !this.operating;
+  }
   interrupt() {
-    if (this.abort) {
+    if (this.operating) {
+      this.view.panel('STATUS', 'Waiting for the session operation to finish.');
+    } else if (this.abort) {
       this.abort.abort();
       this.view.panel('STATUS', 'Cancellation requested. Waiting for the current operation to stop.');
-    } else if (this.operating) {
-      this.view.panel('STATUS', 'Waiting for the session operation to finish.');
     } else this.closed = true;
   }
   async dispose() {
@@ -100,15 +114,20 @@ export class SessionController {
     this.session = next;
     this.view.reset?.();
   }
-  private async command(action: () => Promise<void>) {
+  private async command(operation: keyof typeof operationStatus, action: () => Promise<void>) {
     this.operating = true;
+    const [active, completed, failed] = operationStatus[operation];
+    let status: string = completed;
     try {
+      this.view.setStatus?.(active);
       await action();
     } catch (error) {
+      status = failed;
       this.exitCode = 1;
-      this.view.panel('ERROR', error instanceof Error ? error.message : String(error));
+      this.view.panel('ERROR', error === noSessionFile ? noSessionFile.message : operationFailure[operation]);
     } finally {
       this.operating = false;
+      this.view.setStatus?.(status);
     }
   }
   async submit(raw: string) {
@@ -116,7 +135,12 @@ export class SessionController {
     const input = raw.trim();
     if (!input) return;
     if (this.busy) {
-      this.view.panel('ERROR', 'A run is already active. Cancel it before submitting another input or command.');
+      this.view.panel(
+        'ERROR',
+        this.cancellable
+          ? 'A run is already active. Cancel it before submitting another input or command.'
+          : 'A session operation is active. Wait for it to finish before submitting another input or command.',
+      );
       return;
     }
     if (input === '/quit' || input === '/exit') {
@@ -137,7 +161,7 @@ export class SessionController {
         this.view.panel('ERROR', 'Usage: /create <plain-language agent instructions>');
         return;
       }
-      await this.command(async () => {
+      await this.command('reset', async () => {
         await this.replace(runtime(this.factory(system)));
         this.options.persistence?.reset();
         this.view.panel(
@@ -161,10 +185,10 @@ export class SessionController {
         this.view.panel('ERROR', 'Usage: /resume <session file>');
         return;
       }
-      await this.command(async () => {
+      await this.command(save ? 'save' : 'restore', async () => {
         if (save) {
           const saved = await storage.save(this.session.agent, path || undefined);
-          if (!saved) throw new Error('No session file selected. Use /save <file>.');
+          if (!saved) throw noSessionFile;
           this.view.panel(
             'STATUS',
             `Session saved: ${saved}. Contains conversation and project content; keep it private.`,
@@ -200,19 +224,33 @@ export class SessionController {
       this.exitCode = result.status === 'cancelled' ? 130 : result.status === 'completed' ? 0 : 1;
       this.view.finish(result);
       // The done observer may run before core clears its busy flag. Save only after run resolves.
-      try {
-        await this.options.persistence?.save(this.session.agent, undefined, result);
-      } catch (error) {
-        this.exitCode = 1;
-        this.view.panel(
-          'ERROR',
-          `Session save failed. History remains available in this session. ${error instanceof Error ? error.message : String(error)}`,
-        );
+      const storage = this.options.persistence;
+      if (storage) {
+        this.operating = true;
+        const outcome = `${result.status} · ${result.steps} model step${result.steps === 1 ? '' : 's'}`;
+        let status = outcome;
+        try {
+          this.view.setStatus?.(`${outcome} · saving session`);
+          const saved = await storage.save(this.session.agent, undefined, result);
+          if (saved) status = `${outcome} · saved`;
+        } catch {
+          status = `${outcome} · save failed`;
+          this.exitCode = 1;
+          this.view.panel('ERROR', operationFailure.save);
+        } finally {
+          this.operating = false;
+          this.view.setStatus?.(status);
+        }
       }
       return result;
-    } catch (error) {
+    } catch {
       this.exitCode = 1;
-      this.view.panel('ERROR', error instanceof Error ? error.message : String(error));
+      const message = 'Run failed. Inspect the current session and any tool effects before retrying.';
+      if (this.view.runError) this.view.runError(message);
+      else {
+        this.view.setStatus?.('run failed · check error');
+        this.view.panel('ERROR', message);
+      }
       return;
     } finally {
       this.abort = undefined;
