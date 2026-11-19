@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Pure Agent</title>
-  <link rel="icon" href="./assets/pixel-portrait-transparent.svg" type="image/svg+xml">
+  <link rel="icon" href="./favicon.ico" sizes="16x16 24x24 32x32 48x48 64x64 128x128 256x256">
   <style>
     :root { color-scheme: light dark; }
     body {
@@ -18,7 +18,8 @@
       text-align: center;
     }
     main { padding: 2rem; }
-    img { display: block; margin-inline: auto; }
+    .portraits { display: flex; justify-content: center; align-items: end; gap: 0.75rem; }
+    .portraits img { display: block; }
     h1 { margin: 1rem 0 1.2rem; font: 500 clamp(2.25rem, 7vw, 3.2rem)/1.15 Georgia, serif; }
     a { color: inherit; font: 0.875rem/1.5 ui-monospace, monospace; text-underline-offset: 0.25em; }
     @media (prefers-color-scheme: dark) { body { background: #0c0d0f; color: #e9eaeb; } }
@@ -26,7 +27,10 @@
 </head>
 <body>
   <main>
-    <img src="./assets/pixel-portrait-transparent.svg" width="76" height="76" alt="">
+    <div class="portraits">
+      <img src="./assets/pixel-portrait-transparent.svg" width="96" height="96" alt="Pure Agent, mature form">
+      <img src="./assets/pixel-portrait-chibi.png" width="76" height="76" alt="Pure Agent, chibi form">
+    </div>
     <h1>Pure Agent</h1>
     <a href="https://github.com/pixelieee/pure-agent">GitHub</a>
   </main>
